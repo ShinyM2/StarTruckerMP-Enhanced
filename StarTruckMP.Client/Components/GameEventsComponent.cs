@@ -45,8 +45,6 @@ public class GameEventsComponent : MonoBehaviour
         // trailer twice.
         if (_player == null || _truck == null) AcquireWorldObjects();
 
-        if (!_pptRunning) PlayerPositionThread();
-        if (!_tptRunning) TruckPositionThread();
     }
 
     private void AcquireWorldObjects()
@@ -208,146 +206,104 @@ public class GameEventsComponent : MonoBehaviour
     private const float ThresholdChange = 0.1f;
 
     /// <summary>
-    /// Gap between position sends. Receivers dead-reckon between packets, so 30/s is plenty
-    /// and halves the traffic the old 15 ms loop pushed through the tunnel.
+    /// Gap between position sends. Receivers interpolate between packets, so 30/s is plenty.
     /// </summary>
-    private const int SendIntervalMs = 33;
+    private const float SendInterval = 0.033f;
+
+    /// <summary>A standing truck is still reported now and then, so a late joiner is not left guessing.</summary>
+    private const float HeartbeatInterval = 1f;
 
     /// <summary>Per-stream packet counters, so receivers can discard out-of-order updates.</summary>
     private uint _playerSeq;
     private uint _truckSeq;
 
-    #region Player Location updates
-
-    private bool _pptRunning = false;
+    private float _nextSend;
+    private Vector3 _lastTruckSent;
+    private Vector3 _lastPlayerSent;
+    private float _lastTruckSendTime;
+    private float _lastPlayerSendTime;
 
     /// <summary>
-    /// Unity isn't thread-safe, so we will update the position outside the main thread
-    /// to avoid stuck the Update thread
+    /// Positions go out from the physics step, on the game thread.
+    ///
+    /// They used to be read by two background threads, which Unity does not promise anything
+    /// about: a position and the scene origin it had to be converted with could be read on either
+    /// side of the game recentring the world, and the result was a packet a few kilometres off —
+    /// the "teleport" other players saw. Here the position, the velocity and the origin are all
+    /// read within one physics step, and the timestamp is taken at the same instant.
     /// </summary>
-    /// <returns></returns>
-    private void PlayerPositionThread()
+    private void FixedUpdate()
     {
-        if (_pptRunning) return;
+        if (Network.NetId == -1) return;
+        if (Time.unscaledTime < _nextSend) return;
+        _nextSend = Time.unscaledTime + SendInterval;
 
-        var ct = _cts.Token;
-        Plugin.StartAttachedThread(() =>
+        try
         {
-            _pptRunning = true;
-
-            App.Log.LogInfo("PlayerPositionThread started");
-
-            var lastPosition = Vector3.zero;
-            while (!ct.IsCancellationRequested)
-            {
-                try
-                {
-                    var player = _player;
-                    var rigid = _playerRigid;
-                    if (Network.NetId == -1 || player == null || rigid == null)
-                    {
-                        ct.WaitHandle.WaitOne(100);
-                        continue;
-                    }
-
-                    player.transform.GetPositionAndRotation(out var position, out var rotation);
-                    if (Vector3.Distance(lastPosition, position) > ThresholdChange)
-                    {
-                        Network.SendServerMessage(new UpdatePositionCmd
-                        {
-                            // Sent in absolute world space: every client recentres its scene
-                            // differently, so raw local coordinates mean nothing to the receiver.
-                            Position = ConvertToSharedVector3(FloatingOrigin.ToWorld(position)),
-                            Rotation = ConvertToSharedQuaternion(rotation),
-                            Velocity = ConvertToSharedVector3(rigid.velocity),
-                            AngVel = ConvertToSharedVector3(rigid.angularVelocity),
-                            IsTruck = false,
-                            InSeat = false,
-                            Seq = ++_playerSeq,
-                            SentAt = Environment.TickCount64
-                        }, PacketType.UpdatePosition);
-                        lastPosition = position;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    // The player object dies with the world when a save is unloaded; the next
-                    // arrival in a sector finds the new one. An unhandled exception here would
-                    // take the whole game down with the thread.
-                    App.Log.LogWarning($"[Sync] Player position send failed: {ex.Message}");
-                    ct.WaitHandle.WaitOne(1000);
-                    continue;
-                }
-
-                ct.WaitHandle.WaitOne(SendIntervalMs);
-            }
-
-            _pptRunning = false;
-        });
+            SendTruck();
+            SendPlayer();
+        }
+        catch (Exception ex)
+        {
+            // The player and the truck die with the world when a save is unloaded; the next arrival
+            // in a sector finds the new ones.
+            App.Log.LogWarning($"[Sync] Position send failed: {ex.Message}");
+        }
     }
 
-    #endregion
-
-    #region Truck Location updates
-
-    private bool _tptRunning = false;
-
-    private void TruckPositionThread()
+    private void SendTruck()
     {
-        if (_tptRunning) return;
+        var truck = _truck;
+        var rigid = _truckRigid;
+        if (truck == null || rigid == null) return;
 
-        var ct = _cts.Token;
-        Plugin.StartAttachedThread(() =>
+        truck.transform.GetPositionAndRotation(out var position, out var rotation);
+        var moved = Vector3.Distance(_lastTruckSent, position) > ThresholdChange;
+        if (!moved && Time.unscaledTime - _lastTruckSendTime < HeartbeatInterval) return;
+
+        Network.SendServerMessage(new UpdatePositionCmd
         {
-            _tptRunning = true;
+            // Sent in absolute world space: every client recentres its scene differently, so raw
+            // local coordinates mean nothing to the receiver.
+            Position = ConvertToSharedVector3(FloatingOrigin.ToWorld(position)),
+            Rotation = ConvertToSharedQuaternion(rotation),
+            Velocity = ConvertToSharedVector3(rigid.velocity),
+            AngVel = ConvertToSharedVector3(rigid.angularVelocity),
+            IsTruck = true,
+            InSeat = false,
+            Seq = ++_truckSeq,
+            SentAt = Environment.TickCount64
+        }, PacketType.UpdatePosition);
 
-            App.Log.LogInfo("TruckPositionThread started");
-
-            var lastPosition = Vector3.zero;
-            while (!ct.IsCancellationRequested)
-            {
-                try
-                {
-                    var truck = _truck;
-                    var rigid = _truckRigid;
-                    if (Network.NetId == -1 || truck == null || rigid == null)
-                    {
-                        ct.WaitHandle.WaitOne(100);
-                        continue;
-                    }
-
-                    truck.transform.GetPositionAndRotation(out var position, out var rotation);
-                    if (Vector3.Distance(lastPosition, position) > ThresholdChange)
-                    {
-                        Network.SendServerMessage(new UpdatePositionCmd
-                        {
-                            Position = ConvertToSharedVector3(FloatingOrigin.ToWorld(position)),
-                            Rotation = ConvertToSharedQuaternion(rotation),
-                            Velocity = ConvertToSharedVector3(rigid.velocity),
-                            AngVel = ConvertToSharedVector3(rigid.angularVelocity),
-                            IsTruck = true,
-                            InSeat = false,
-                            Seq = ++_truckSeq,
-                            SentAt = Environment.TickCount64
-                        }, PacketType.UpdatePosition);
-                        lastPosition = position;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    App.Log.LogWarning($"[Sync] Truck position send failed: {ex.Message}");
-                    ct.WaitHandle.WaitOne(1000);
-                    continue;
-                }
-
-                ct.WaitHandle.WaitOne(SendIntervalMs);
-            }
-
-            _tptRunning = false;
-        });
+        _lastTruckSent = position;
+        _lastTruckSendTime = Time.unscaledTime;
     }
 
-    #endregion
+    private void SendPlayer()
+    {
+        var player = _player;
+        var rigid = _playerRigid;
+        if (player == null || rigid == null) return;
+
+        player.transform.GetPositionAndRotation(out var position, out var rotation);
+        var moved = Vector3.Distance(_lastPlayerSent, position) > ThresholdChange;
+        if (!moved && Time.unscaledTime - _lastPlayerSendTime < HeartbeatInterval) return;
+
+        Network.SendServerMessage(new UpdatePositionCmd
+        {
+            Position = ConvertToSharedVector3(FloatingOrigin.ToWorld(position)),
+            Rotation = ConvertToSharedQuaternion(rotation),
+            Velocity = ConvertToSharedVector3(rigid.velocity),
+            AngVel = ConvertToSharedVector3(rigid.angularVelocity),
+            IsTruck = false,
+            InSeat = false,
+            Seq = ++_playerSeq,
+            SentAt = Environment.TickCount64
+        }, PacketType.UpdatePosition);
+
+        _lastPlayerSent = position;
+        _lastPlayerSendTime = Time.unscaledTime;
+    }
 
     private StarTruckMP.Shared.Vector3 ConvertToSharedVector3(Vector3 unityVector)
     {

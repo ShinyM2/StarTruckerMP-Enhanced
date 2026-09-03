@@ -481,14 +481,18 @@ internal static class MonitorPanel
 
         foreach (var player in MultiplayerState.Players)
         {
-            lines.Append("  ")
-                 .Append(player.Name);
+            // The name in the player's own colour, the one their nameplate carries.
+            lines.Append("  <color=")
+                 .Append(MultiplayerState.ColorHex(player.NetId))
+                 .Append('>')
+                 .Append(player.Name)
+                 .Append("</color>");
 
             // Lit while their voice is coming out of the radio.
             if (MultiplayerState.IsSpeaking(player.NetId)) lines.Append(OnAirMark);
 
             lines.Append("   ")
-                 .Append(player.SameSector ? Strings.Get("monitor.nearby") : PrettySector(player.Sector));
+                 .Append(player.SameSector ? Whereabouts(player.NetId) : PrettySector(player.Sector));
 
             if (player.Ping >= 0) lines.Append("   ").Append(player.Ping).Append(Strings.Get("monitor.ms"));
 
@@ -500,6 +504,19 @@ internal static class MonitorPanel
 
     /// <summary>The on-air marker, beside a name while that player's voice is on the radio.</summary>
     private const string OnAirMark = " ((•))";
+
+    /// <summary>
+    /// For a player in our sector: how far their truck is from ours, or "nearby" while their truck
+    /// has not been placed yet.
+    /// </summary>
+    private static string Whereabouts(int netId)
+    {
+        var truck = Components.NetworkEventsComponent.RemoteTruck(netId);
+        var mine = PlayerState.Truck;
+        if (truck == null || mine == null) return Strings.Get("monitor.nearby");
+
+        return Components.NameplateComponent.FormatDistance(Vector3.Distance(mine.transform.position, truck.transform.position));
+    }
 
     private static string Own()
     {

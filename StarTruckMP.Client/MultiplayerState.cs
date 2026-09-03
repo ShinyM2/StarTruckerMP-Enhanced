@@ -52,6 +52,29 @@ internal static class MultiplayerState
     }
 
     // ---------------------------------------------------------------------------------------
+    // Who is which colour
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Eight colours that read on both a bright hull and the black of space and stay apart from
+    /// each other: the game's own amber first, then the rest of the instrument-panel family.
+    /// </summary>
+    private static readonly string[] Palette =
+    {
+        "#EFC806", // amber
+        "#5FD3F0", // cyan
+        "#8CE06B", // green
+        "#F07BE0", // magenta
+        "#FF9A3C", // orange
+        "#C7F04A", // lime
+        "#7FA8FF", // sky
+        "#FF7A8A"  // coral
+    };
+
+    /// <summary>A player's colour as "#rrggbb", fixed for the session: the same one everywhere they are named.</summary>
+    public static string ColorHex(int netId) => Palette[((netId % Palette.Length) + Palette.Length) % Palette.Length];
+
+    // ---------------------------------------------------------------------------------------
     // Who is on the air
     // ---------------------------------------------------------------------------------------
 

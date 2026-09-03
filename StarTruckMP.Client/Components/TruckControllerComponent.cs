@@ -20,8 +20,19 @@ namespace StarTruckMP.Client.Components;
 /// </summary>
 public class TruckControllerComponent : MonoBehaviour
 {
-    /// <summary>How far behind the newest state the truck is drawn. About four packets at the 30 Hz send rate.</summary>
-    private const double InterpolationDelay = 0.12;
+    /// <summary>How far behind the newest state the truck is drawn, at best. About four packets at the 30 Hz send rate.</summary>
+    private const double MinDelay = 0.12;
+
+    /// <summary>The most cushion a bad link is given before the truck is simply allowed to coast.</summary>
+    private const double MaxDelay = 0.35;
+
+    /// <summary>Each time the buffer runs dry the cushion grows by this much; it shrinks back slowly.</summary>
+    private const double DelayStep = 0.02;
+    private const double DelayRecoveryPerSecond = 0.01;
+
+    /// <summary>The current cushion: starts at the minimum and adapts to how uneven the packets arrive.</summary>
+    private double _delay = MinDelay;
+    private double _lastDryTime;
 
     /// <summary>The longest the truck coasts on its last velocity once the buffer is exhausted.</summary>
     private const double MaxExtrapolation = 0.5;
@@ -84,7 +95,21 @@ public class TruckControllerComponent : MonoBehaviour
             if (_snapshots.Count == 0) return;
 
             // Where in the owner's time we are drawing right now.
-            var playback = Now() + _clockOffset - InterpolationDelay;
+            var now = Now();
+            var playback = now + _clockOffset - _delay;
+
+            // A link that keeps leaving the buffer empty gets a bigger cushion; a quiet one earns
+            // it back a little at a time, so the truck is never further behind than it has to be.
+            var newestTime = _snapshots[_snapshots.Count - 1].Time;
+            if (playback > newestTime && now - _lastDryTime > 0.25)
+            {
+                _lastDryTime = now;
+                _delay = Math.Min(MaxDelay, _delay + DelayStep);
+            }
+            else if (_delay > MinDelay)
+            {
+                _delay = Math.Max(MinDelay, _delay - DelayRecoveryPerSecond * Time.fixedDeltaTime);
+            }
 
             // Forget what is well behind the playback point, keeping one state before it.
             while (_snapshots.Count > 2 && _snapshots[1].Time < playback - KeepBehind)

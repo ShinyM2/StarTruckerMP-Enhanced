@@ -12,6 +12,8 @@
 		sameSector: boolean;
 		/** Milliseconds to the server, as the server measures it; -1 before it has said. */
 		ping: number;
+		/** The player's colour as "#rrggbb", shared with their nameplate and monitor line. */
+		color?: string;
 	}
 
 	interface Roster {
@@ -83,7 +85,7 @@
 			{#each nearby as player (player.netId)}
 				<li>
 					<span class="dot here-dot"></span>
-					<span class="name">{player.name}</span>
+					<span class="name" style:color={player.color || undefined}>{player.name}</span>
 					<span class="sector">{prettySector(player.sector)}</span>
 					<span class="ping">{prettyPing(player.ping)}</span>
 				</li>
@@ -92,7 +94,7 @@
 			{#each elsewhere as player (player.netId)}
 				<li class="away">
 					<span class="dot"></span>
-					<span class="name">{player.name}</span>
+					<span class="name" style:color={player.color || undefined}>{player.name}</span>
 					<span class="sector">{prettySector(player.sector)}</span>
 					<span class="ping">{prettyPing(player.ping)}</span>
 				</li>

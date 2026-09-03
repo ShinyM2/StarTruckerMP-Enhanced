@@ -183,6 +183,10 @@ internal static class Strings
         ["monitor.type"] = new[] { "TYPE", "НАПИСАТЬ", "SCHREIBEN", "ÉCRIRE", "ESCRIBIR", "ESCREVER", "PISZ", "SCRIVI", "输入", "輸入" },
         ["monitor.sit"] = new[] { "TAKE THE SEAT TO CHAT", "СЯДЬТЕ В КРЕСЛО, ЧТОБЫ ПИСАТЬ", "ZUM CHATTEN HINSETZEN", "ASSEYEZ-VOUS POUR ÉCRIRE", "SIÉNTATE PARA ESCRIBIR", "SENTE-SE PARA ESCREVER", "USIĄDŹ, ABY PISAĆ", "SIEDITI PER SCRIVERE", "坐到座位上即可聊天", "坐到座位上即可聊天" },
 
+        // Units
+        ["unit.m"] = new[] { "m", "м", "m", "m", "m", "m", "m", "m", "米", "米" },
+        ["unit.km"] = new[] { "km", "км", "km", "km", "km", "km", "km", "km", "公里", "公里" },
+
         // Nameplates
         ["nameplate.ghost"] = new[] { "GHOST", "ГОСТ-РЕЖИМ", "GEIST", "FANTÔME", "FANTASMA", "FANTASMA", "DUCH", "FANTASMA", "幽灵", "幽靈" },
 

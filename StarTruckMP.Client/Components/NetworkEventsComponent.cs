@@ -74,6 +74,16 @@ public class NetworkEventsComponent : MonoBehaviour
         return state;
     }
 
+    /// <summary>
+    /// The trucks of the players in our sector, by net id, for anything that wants to measure or
+    /// point at them: the monitor's distance column, the nameplates. Game thread only.
+    /// </summary>
+    private static readonly Dictionary<int, GameObject> _remoteTrucks = new();
+
+    /// <summary>A remote player's truck, or null when they are not in our sector.</summary>
+    public static GameObject RemoteTruck(int netId) =>
+        _remoteTrucks.TryGetValue(netId, out var truck) && truck != null ? truck : null;
+
     private class NetPlayer
     {
         public int PlayerId { get; set; }
@@ -109,6 +119,7 @@ public class NetworkEventsComponent : MonoBehaviour
 
             var controller = player.TruckObj.GetComponent<TruckControllerComponent>();
             if (controller != null) controller.NetId = netId;
+            _remoteTrucks[netId] = player.TruckObj;
 
             ConfigureRemoteTruckPhysics(player.TruckObj);
 
@@ -197,6 +208,7 @@ public class NetworkEventsComponent : MonoBehaviour
 
         var rebuiltController = player.TruckObj.GetComponent<TruckControllerComponent>();
         if (rebuiltController != null) rebuiltController.NetId = netId;
+        _remoteTrucks[netId] = player.TruckObj;
 
         TruckAppearanceSync.Apply(player.TruckObj, state.Livery, state.Appearance);
         ConfigureRemoteTruckPhysics(player.TruckObj);
@@ -467,7 +479,8 @@ public class NetworkEventsComponent : MonoBehaviour
                 Name = ResolveName(known.Key),
                 Sector = known.Value.Sector,
                 SameSector = known.Value.Sector == PlayerState.Sector,
-                Ping = known.Value.Ping
+                Ping = known.Value.Ping,
+                Color = MultiplayerState.ColorHex(known.Key)
             });
         }
 
@@ -506,6 +519,9 @@ public class NetworkEventsComponent : MonoBehaviour
         public string Sector { get; set; } = string.Empty;
         public bool SameSector { get; set; }
         public int Ping { get; set; } = -1;
+
+        /// <summary>The player's colour as "#rrggbb", the same one their nameplate and monitor line use.</summary>
+        public string Color { get; set; } = string.Empty;
     }
 
     /// <summary>Our own latency, as the server reports it back to us.</summary>
@@ -601,6 +617,7 @@ public class NetworkEventsComponent : MonoBehaviour
         if (player.TruckObj != null) player.TruckObj.SetActive(false);
         if (player.PlayerObj != null) player.PlayerObj.SetActive(false);
         _players.Remove(netId);
+        _remoteTrucks.Remove(netId);
     }
 
     private void HandlePlayerDisconnected(int netId)
