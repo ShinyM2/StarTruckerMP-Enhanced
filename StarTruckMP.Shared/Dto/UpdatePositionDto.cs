@@ -23,5 +23,9 @@ namespace StarTruckMP.Shared.Dto
         /// <summary>Sender's per-stream counter, relayed untouched so receivers can drop stale updates.</summary>
         [Key(7)]
         public uint Seq { get; set; }
+
+        /// <summary>The sender's own clock at the time of the reading, relayed untouched; see the command.</summary>
+        [Key(8)]
+        public long SentAt { get; set; }
     }
 }

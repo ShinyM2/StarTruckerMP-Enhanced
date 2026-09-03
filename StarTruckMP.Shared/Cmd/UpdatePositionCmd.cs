@@ -25,5 +25,14 @@ namespace StarTruckMP.Shared.Cmd
         /// </summary>
         [Key(6)]
         public uint Seq { get; set; }
+
+        /// <summary>
+        /// The sender's clock when the state was read, in milliseconds of its own monotonic time.
+        /// Receivers use the spacing between consecutive values to play the movement back at the
+        /// pace it happened, whatever the network did to the packets on the way; the absolute
+        /// value means nothing to anyone else.
+        /// </summary>
+        [Key(7)]
+        public long SentAt { get; set; }
     }
 }

@@ -568,7 +568,8 @@ public class ServerManager
             AngVel = positionData.AngVel,
             IsTruck = positionData.IsTruck,
             InSeat = positionData.InSeat,
-            Seq = positionData.Seq
+            Seq = positionData.Seq,
+            SentAt = positionData.SentAt
         };
 
         // Only players sharing this sector can see the sender, so there is no point paying for

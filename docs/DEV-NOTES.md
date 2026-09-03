@@ -47,6 +47,10 @@ for (var i = 0; i < click.GetPersistentEventCount(); i++)
     click.SetPersistentListenerState(i, UnityEventCallState.Off);
 ```
 
+### Menu entries own the selection, and re-disable themselves
+
+`MenuButton` carries an `Animator` (bools Pressed/Selected/Disabled) and a `disableOnEnable` flag; the screen's controller hands the UI selection to an entry every frame and disables entries it does not know about when it reshuffles its own. Consequences, all seen in game: a cloned entry switched back on comes up in the Disabled state with its resting label faded to nothing until hovered; a `TMP_InputField` inside a row takes one character and goes deaf; a clone of the pause menu's first entry inherits its lit plate. `MultiplayerScreen` therefore revives every visible row on each refresh (`Revive`: `disableOnEnable = false`, `SetEnabled(true)`, `ForceRefresh()`), strips button, animator and images from read-only and input rows, and draws and reads its text boxes itself (`TextField`, `HandleFields`).
+
 ### The menu font has no Cyrillic
 
 `TMP_FontAsset.HasCharacter` says no for Cyrillic while the menu is plainly in Russian: TMP draws it through a fallback. Never judge the language from the font. `StringTable.language` (`en`, `ru`, `pt-br`, ...) is the answer, valid once `StringTable.isReady`.

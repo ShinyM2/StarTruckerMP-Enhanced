@@ -1,47 +1,61 @@
 ﻿using System;
+using System.Collections.Generic;
 using StarTruckMP.Client.Synchronization;
 using UnityEngine;
 
 namespace StarTruckMP.Client.Components;
 
 /// <summary>
-/// Moves a remote player's truck towards where the network says it is.
+/// Moves a remote player's truck the way its owner moved it.
 ///
-/// Packets arrive late and a few times a second; the truck must look continuous. Each packet's
-/// position is carried forward by its velocity for the time it has been in flight and the time
-/// since it arrived, and the truck is eased towards that. Without the flight time — half a round
-/// trip on each side of the server — a remote truck trails its owner by latency times speed, which
-/// at cruising speed is several truck lengths.
+/// Packets arrive a few times a second, late and unevenly. Chasing each one as it lands — the
+/// previous approach — made the copy lurch: every packet moved the goal, and the goal moved by a
+/// different amount each time because the gaps between packets were never the same. So the copy
+/// now plays the movement back slightly in the past. Each packet carries the sender's own clock;
+/// the states are kept in order, and the truck is drawn where the owner was about 120 ms ago,
+/// interpolated between the two states either side of that moment. That is enough of a cushion
+/// for a packet to be late without the truck ever waiting for it, and the motion between two real
+/// positions is exactly as smooth as the owner's. Only when the cushion runs dry does the truck
+/// coast on its last velocity, and never for long.
 /// </summary>
 public class TruckControllerComponent : MonoBehaviour
 {
-    private Rigidbody _rb;
+    /// <summary>How far behind the newest state the truck is drawn. About four packets at the 30 Hz send rate.</summary>
+    private const double InterpolationDelay = 0.12;
 
-    /// <summary>Target position in absolute world space — see <see cref="FloatingOrigin"/>.</summary>
-    public Vector3 TargetPosition;
-    public Quaternion TargetRotation;
-    public Vector3 TargetVelocity;
+    /// <summary>The longest the truck coasts on its last velocity once the buffer is exhausted.</summary>
+    private const double MaxExtrapolation = 0.5;
 
-    /// <summary>The player this truck belongs to, so their latency can be looked up.</summary>
-    public int NetId = -1;
-
-    // Interpolation
-    private float _lerpSpeed = 15f;
+    /// <summary>States older than this behind the playback point are of no further use.</summary>
+    private const double KeepBehind = 1.0;
 
     /// <summary>
-    /// How far ahead of the last packet we are willing to dead-reckon, in seconds. Long enough
-    /// to cover normal latency and a few dropped packets, short enough that a truck which
-    /// stopped sending does not sail off into the distance.
+    /// How fast the estimate of "their clock minus ours" follows the packets. Slow, so that one
+    /// packet arriving late does not move the whole playback; the interpolation delay covers that.
     /// </summary>
-    private const float MaxExtrapolation = 0.6f;
+    private const double ClockFollow = 0.05;
 
-    /// <summary>The most flight time a packet is credited with; beyond this the estimate is noise.</summary>
-    private const float MaxLatencyCompensation = 0.3f;
+    private struct Snapshot
+    {
+        public double Time;
+        public Vector3 Position;
+        public Quaternion Rotation;
+        public Vector3 Velocity;
+    }
 
-    /// <summary>Time.time when the last network state arrived, used to age the extrapolation.</summary>
-    private float _lastUpdateTime;
+    private readonly List<Snapshot> _snapshots = new();
+    private readonly object _lock = new();
 
-    private bool _hasFirstUpdate = false;
+    private Rigidbody _rb;
+
+    /// <summary>The player this truck belongs to.</summary>
+    public int NetId = -1;
+
+    /// <summary>Their clock minus ours, in seconds, including the one-way trip; learned from the packets.</summary>
+    private double _clockOffset;
+    private bool _clockKnown;
+
+    private bool _hasFirstUpdate;
 
     // hide until we get the real position
     private GameObject _npcTruckVisual;
@@ -62,54 +76,106 @@ public class TruckControllerComponent : MonoBehaviour
     {
         if (!_hasFirstUpdate || _rb == null) return;
 
-        // Lerping straight at the last received position always trails the real truck by
-        // roughly speed / lerpSpeed plus a full network round trip — metres at cruising speed,
-        // which is what reads as desync. Carry the position forward by the velocity we were
-        // sent instead, so the target is where the truck is now rather than where it was.
-        var age = Mathf.Clamp(Time.time - _lastUpdateTime + FlightTime(), 0f, MaxExtrapolation);
-        var predicted = TargetPosition + TargetVelocity * age;
+        Vector3 worldPosition;
+        Quaternion rotation;
+
+        lock (_lock)
+        {
+            if (_snapshots.Count == 0) return;
+
+            // Where in the owner's time we are drawing right now.
+            var playback = Now() + _clockOffset - InterpolationDelay;
+
+            // Forget what is well behind the playback point, keeping one state before it.
+            while (_snapshots.Count > 2 && _snapshots[1].Time < playback - KeepBehind)
+                _snapshots.RemoveAt(0);
+
+            Sample(playback, out worldPosition, out rotation);
+        }
 
         // Converted every step rather than once on arrival: the scene can be recentred between
         // two packets, and a target left in stale scene coordinates would drag the truck across
         // the sector until the next update landed.
-        var target = FloatingOrigin.ToScene(predicted);
-
-        _rb.MovePosition(Vector3.Lerp(transform.position, target, _lerpSpeed * Time.fixedDeltaTime));
-        _rb.MoveRotation(Quaternion.Slerp(transform.rotation, TargetRotation, _lerpSpeed * Time.fixedDeltaTime));
+        _rb.MovePosition(FloatingOrigin.ToScene(worldPosition));
+        _rb.MoveRotation(rotation);
     }
 
-    /// <summary>
-    /// How long a packet from this truck's owner has been on the wire when it reaches us: half
-    /// their round trip to the server plus half of ours. Both come from the server's own latency
-    /// table, so no clock has to be agreed on.
-    /// </summary>
-    private float FlightTime()
+    /// <summary>The state at a moment of the owner's time, between two known states or coasting past the last.</summary>
+    private void Sample(double time, out Vector3 position, out Quaternion rotation)
     {
-        var mine = MultiplayerState.OwnPing;
-        var theirs = -1;
+        var newest = _snapshots[_snapshots.Count - 1];
 
-        if (NetId >= 0)
+        if (time >= newest.Time)
         {
-            foreach (var player in MultiplayerState.Players)
-            {
-                if (player.NetId != NetId) continue;
-                theirs = player.Ping;
-                break;
-            }
+            var ahead = Math.Min(time - newest.Time, MaxExtrapolation);
+            position = newest.Position + newest.Velocity * (float)ahead;
+            rotation = newest.Rotation;
+            return;
         }
 
-        if (mine < 0 && theirs < 0) return 0f;
+        var oldest = _snapshots[0];
+        if (time <= oldest.Time)
+        {
+            position = oldest.Position;
+            rotation = oldest.Rotation;
+            return;
+        }
 
-        var seconds = (Math.Max(mine, 0) + Math.Max(theirs, 0)) / 2f / 1000f;
-        return Mathf.Clamp(seconds, 0f, MaxLatencyCompensation);
+        for (var i = 1; i < _snapshots.Count; i++)
+        {
+            var b = _snapshots[i];
+            if (time > b.Time) continue;
+
+            var a = _snapshots[i - 1];
+            var span = b.Time - a.Time;
+            var t = span > 0.0001 ? (float)((time - a.Time) / span) : 1f;
+
+            position = Vector3.LerpUnclamped(a.Position, b.Position, t);
+            rotation = Quaternion.Slerp(a.Rotation, b.Rotation, t);
+            return;
+        }
+
+        position = newest.Position;
+        rotation = newest.Rotation;
     }
 
-    public void ApplyNetworkState(Vector3 pos, Quaternion rot, Vector3 vel)
+    private static double Now() => Environment.TickCount64 / 1000.0;
+
+    /// <summary>
+    /// Takes a state off the wire. <paramref name="sentAtMs"/> is the sender's clock; a zero (an
+    /// older client) is replaced by our own arrival time, which still plays back correctly, just
+    /// with the network's unevenness left in.
+    /// </summary>
+    public void ApplyNetworkState(Vector3 pos, Quaternion rot, Vector3 vel, long sentAtMs)
     {
-        TargetPosition = pos;
-        TargetRotation = rot;
-        TargetVelocity = vel;
-        _lastUpdateTime = Time.time;
+        var now = Now();
+        var sentAt = sentAtMs > 0 ? sentAtMs / 1000.0 : now;
+
+        lock (_lock)
+        {
+            // Their clock minus ours. Followed slowly, and never allowed to make the newest packet
+            // look like it came from the future: that would stretch the cushion for no reason.
+            var offset = sentAt - now;
+            if (!_clockKnown)
+            {
+                _clockOffset = offset;
+                _clockKnown = true;
+            }
+            else
+            {
+                _clockOffset += (offset - _clockOffset) * ClockFollow;
+                if (offset < _clockOffset) _clockOffset = offset;
+            }
+
+            var snapshot = new Snapshot { Time = sentAt, Position = pos, Rotation = rot, Velocity = vel };
+
+            // Keep the list ordered by the sender's time; a packet that overtook a newer one slots in behind it.
+            var index = _snapshots.Count;
+            while (index > 0 && _snapshots[index - 1].Time > sentAt) index--;
+            _snapshots.Insert(index, snapshot);
+
+            if (_snapshots.Count > 64) _snapshots.RemoveAt(0);
+        }
 
         if (!_hasFirstUpdate)
         {

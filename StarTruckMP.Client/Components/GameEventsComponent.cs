@@ -263,7 +263,8 @@ public class GameEventsComponent : MonoBehaviour
                             AngVel = ConvertToSharedVector3(rigid.angularVelocity),
                             IsTruck = false,
                             InSeat = false,
-                            Seq = ++_playerSeq
+                            Seq = ++_playerSeq,
+                            SentAt = Environment.TickCount64
                         }, PacketType.UpdatePosition);
                         lastPosition = position;
                     }
@@ -326,7 +327,8 @@ public class GameEventsComponent : MonoBehaviour
                             AngVel = ConvertToSharedVector3(rigid.angularVelocity),
                             IsTruck = true,
                             InSeat = false,
-                            Seq = ++_truckSeq
+                            Seq = ++_truckSeq,
+                            SentAt = Environment.TickCount64
                         }, PacketType.UpdatePosition);
                         lastPosition = position;
                     }

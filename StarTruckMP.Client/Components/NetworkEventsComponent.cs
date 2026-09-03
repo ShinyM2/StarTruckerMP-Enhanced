@@ -257,8 +257,8 @@ public class NetworkEventsComponent : MonoBehaviour
                     controller.ApplyNetworkState(
                         Vec(positionDto.Position),
                         Quat(positionDto.Rotation),
-                        Vec(positionDto.Velocity)
-                        );
+                        Vec(positionDto.Velocity),
+                        positionDto.SentAt);
                 else App.Log.LogError("TruckControllerComponent is NULL");
             }
             else if (!positionDto.IsTruck && player.PlayerObj != null)
