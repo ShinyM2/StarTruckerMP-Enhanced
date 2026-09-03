@@ -4,6 +4,6 @@
     {
         public const string PLUGIN_GUID = "StarTruckMP.Client";
         public const string PLUGIN_NAME = "StarTruckMP";
-        public const string PLUGIN_VERSION = "1.2.1";
+        public const string PLUGIN_VERSION = "1.2.2";
     }
 }

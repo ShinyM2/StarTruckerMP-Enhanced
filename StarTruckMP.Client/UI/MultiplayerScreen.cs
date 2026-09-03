@@ -611,6 +611,21 @@ internal static class MultiplayerScreen
     {
         var row = ActionRow(page, label, null);
 
+        // The entry's own button must go: once it is enabled it claims the selection every frame
+        // the cursor is over it, and the input field — which only receives keys while selected —
+        // lost focus after the first character. Its animator goes with it, so the label stays
+        // put rather than fading; the field's own box is what the player clicks.
+        foreach (var button in row.GetComponents<MenuButton>())
+            Object.DestroyImmediate(button);
+
+        foreach (var animator in row.GetComponentsInChildren<Animator>(true))
+            Object.DestroyImmediate(animator);
+
+        foreach (var text in row.GetComponentsInChildren<TextMeshProUGUI>(true))
+        {
+            if (text.name.Contains("_On_")) text.gameObject.SetActive(false);
+        }
+
         var style = FirstLabel(row);
         if (style == null) return null;
 
