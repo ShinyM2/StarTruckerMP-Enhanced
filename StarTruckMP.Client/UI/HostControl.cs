@@ -31,8 +31,8 @@ internal static class HostControl
         _process = null;
 
         LastMessage = code == 0
-            ? "Сервер завершился."
-            : $"Сервер остановился сразу после запуска (код {code}). Скорее всего, порт занят.";
+            ? Strings.Get("host.msg.exited")
+            : Strings.Get("host.msg.crashed", code);
 
         App.Log.LogWarning($"[Host] Server exited with code {code}");
     }
@@ -87,14 +87,14 @@ internal static class HostControl
     {
         LastMessage = null;
 
-        if (IsHosting) return "Сервер уже запущен.";
+        if (IsHosting) return Strings.Get("host.msg.already");
 
         var exe = ServerExe;
-        if (exe == null) return "Рядом с плагином нет StarTruckMP.Server.exe.";
+        if (exe == null) return Strings.Get("host.msg.noexe");
 
         if (int.TryParse(App.ServerPort.Value, out var port) && PortInUse(port))
         {
-            LastMessage = $"Порт {port} уже занят — сервер, похоже, уже работает. Подключайтесь как игрок.";
+            LastMessage = Strings.Get("host.msg.portbusy", port);
             return LastMessage;
         }
 
@@ -109,7 +109,7 @@ internal static class HostControl
                 WorkingDirectory = Path.GetDirectoryName(exe)!
             });
 
-            if (_process == null) return "Windows отказался запускать сервер.";
+            if (_process == null) return Strings.Get("host.msg.refused");
 
             _process.OutputDataReceived += (_, e) =>
             {
@@ -124,12 +124,12 @@ internal static class HostControl
 
             App.Log.LogInfo($"[Host] Server started (pid={_process.Id})");
             LastMessage = null;
-            return "Сервер запущен.";
+            return Strings.Get("host.msg.started");
         }
         catch (Exception ex)
         {
             App.Log.LogError($"[Host] Failed to start server: {ex.Message}");
-            return $"Не удалось запустить сервер: {ex.Message}";
+            return Strings.Get("host.msg.failed", ex.Message);
         }
     }
 
@@ -152,6 +152,6 @@ internal static class HostControl
             _process = null;
         }
 
-        return "Сервер остановлен.";
+        return Strings.Get("host.msg.stopped");
     }
 }

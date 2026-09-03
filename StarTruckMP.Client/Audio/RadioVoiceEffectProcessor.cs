@@ -10,13 +10,14 @@ namespace StarTruckMP.Client.Audio;
 /// <summary>
 /// Makes a clean voice sound like it came out of a CB set.
 ///
-/// The chain is the one a real handset imposes: a narrow band, a hot input stage that clips
-/// the loud syllables, a compressor riding the level, a squelch gate under it, and the carrier
-/// hiss and the odd crackle the set adds of its own. Every stage keeps its state between
-/// frames, so a 20 ms frame boundary is inaudible.
+/// The chain is the one a real handset imposes on the voice itself: a narrow band, a hot input
+/// stage that folds the loud syllables over, a compressor riding the level and a squelch gate
+/// under it. It colours and distorts; it adds no noise of its own — an earlier version laid a
+/// carrier hiss and crackle over the voice and that only read as a bad microphone. Every stage
+/// keeps its state between frames, so a 20 ms frame boundary is inaudible.
 ///
 /// The strength is the player's <c>RadioEffect</c> setting: off passes the voice through, light
-/// keeps only the band and the compressor, full is the whole set.
+/// keeps the band and the compressor, full adds the drive and the tighter band.
 /// </summary>
 public sealed class RadioVoiceEffectProcessor
 {
@@ -26,21 +27,14 @@ public sealed class RadioVoiceEffectProcessor
     private const float CompressorRatio = 3.5f;
     private const float CompressorAttackSeconds = 0.02f;
     private const float CompressorReleaseSeconds = 0.18f;
-    private const float NoiseGateThresholdDb = -46f;
+    /// <summary>Anything quieter than this between words is shut off, so the compressor cannot lift the room.</summary>
+    private const float NoiseGateThresholdDb = -40f;
     private const float NoiseGateRatio = 8f;
     private const float NoiseGateAttackSeconds = 0.003f;
     private const float NoiseGateReleaseSeconds = 0.08f;
 
     /// <summary>Input drive into the soft clipper. Higher is crunchier.</summary>
-    private const float Drive = 2.6f;
-
-    /// <summary>Carrier hiss under the voice, as a peak amplitude. Faint, but always there.</summary>
-    private const float HissAmplitude = 0.0035f;
-
-    private const float CrackleActivityThreshold = 0.018f;
-    private const float CrackleBurstsPerSecond = 2.5f;
-    private const float CrackleMinAmplitude = 0.008f;
-    private const float CrackleMaxAmplitude = 0.02f;
+    private const float Drive = 3.4f;
 
     private readonly int _sampleRate;
     private readonly float _outputGain;
@@ -50,6 +44,9 @@ public sealed class RadioVoiceEffectProcessor
     private readonly DynamicsProcessor _noiseGate;
     private readonly Random _random = new();
     private readonly float _driveNorm;
+
+    /// <summary>A touch of make-up after the clipper: driving a voice into tanh also squashes its peaks.</summary>
+    private const float PostDriveGain = 1.15f;
 
     public RadioVoiceEffectProcessor(int sampleRate = VoiceFormat.SampleRate, float outputGain = 1f)
     {
@@ -108,19 +105,13 @@ public sealed class RadioVoiceEffectProcessor
 
             // A CB's input stage is driven hard; the loud syllables fold over rather than peak.
             if (full)
-                sample = MathF.Tanh(sample * Drive) * _driveNorm;
+                sample = MathF.Tanh(sample * Drive) * _driveNorm * PostDriveGain;
 
             sample = _compressor.Process(sample);
             sample = _noiseGate.Process(sample);
 
-            if (full)
-                sample += ((float)_random.NextDouble() * 2f - 1f) * HissAmplitude;
-
             pcm[i] = Math.Clamp(sample * _outputGain, -1f, 1f);
         }
-
-        if (full)
-            AddRfCrackle(pcm);
 
         return pcm;
     }
@@ -134,8 +125,9 @@ public sealed class RadioVoiceEffectProcessor
     {
         if (Current != Strength.Full) return Array.Empty<float>();
 
-        var seconds = opening ? 0.045f : 0.13f;
-        var amplitude = opening ? 0.22f : 0.16f;
+        // Short and modest: a click and a tail that say "keyed" and "released", not a wash of static.
+        var seconds = opening ? 0.03f : 0.09f;
+        var amplitude = opening ? 0.14f : 0.09f;
         var count = (int)(_sampleRate * seconds);
         var burst = new float[count];
 
@@ -154,32 +146,4 @@ public sealed class RadioVoiceEffectProcessor
         return burst;
     }
 
-    private void AddRfCrackle(float[] samples)
-    {
-        if (samples.Length == 0) return;
-
-        var peak = 0f;
-        for (var i = 0; i < samples.Length; i++)
-        {
-            var magnitude = MathF.Abs(samples[i]);
-            if (magnitude > peak) peak = magnitude;
-        }
-
-        if (peak < CrackleActivityThreshold) return;
-
-        var burstProbability = CrackleBurstsPerSecond * samples.Length / _sampleRate;
-        if (_random.NextDouble() >= burstProbability) return;
-
-        var burstStart = _random.Next(samples.Length);
-        var burstLength = Math.Min(samples.Length - burstStart, _random.Next(6, 18));
-        var burstAmplitude = CrackleMinAmplitude + (float)_random.NextDouble() * (CrackleMaxAmplitude - CrackleMinAmplitude);
-
-        for (var i = 0; i < burstLength; i++)
-        {
-            var envelope = 1f - i / (float)burstLength;
-            var polarity = _random.NextDouble() > 0.5 ? 1f : -1f;
-            var crackle = polarity * burstAmplitude * envelope * (0.35f + (float)_random.NextDouble() * 0.65f);
-            samples[burstStart + i] = Math.Clamp(samples[burstStart + i] + crackle, -1f, 1f);
-        }
-    }
 }

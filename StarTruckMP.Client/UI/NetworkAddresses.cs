@@ -17,6 +17,16 @@ internal static class NetworkAddresses
     private static string _public;
     private static bool _lookupRunning;
 
+    private static string _local;
+    private static float _localReadAt = float.NegativeInfinity;
+
+    /// <summary>
+    /// How long the local address is trusted before the adapters are asked again. Enumerating
+    /// them costs tens of milliseconds, and the share row used to do it on every redraw — at
+    /// frame rate, in the first build, which is what made hosting from the menu stutter.
+    /// </summary>
+    private const float LocalCacheSeconds = 30f;
+
     /// <summary>The address the outside world sees, or null until the lookup lands.</summary>
     public static string Public => _public;
 
@@ -30,14 +40,26 @@ internal static class NetworkAddresses
             if (_public == null) return local ?? "…";
             if (local == null) return _public;
 
-            return $"{_public}  ·  в одной сети: {local}";
+            return $"{_public}  ·  {Strings.Get("host.text.local")}: {local}";
         }
     }
 
-    /// <summary>This machine's address on the local network, or null when there is no usable one.</summary>
+    /// <summary>This machine's address on the local network, or null when there is no usable one. Cached.</summary>
     public static string Local
     {
         get
+        {
+            var now = UnityEngine.Time.unscaledTime;
+            if (now - _localReadAt < LocalCacheSeconds) return _local;
+
+            _localReadAt = now;
+            _local = ReadLocal();
+            return _local;
+        }
+    }
+
+    private static string ReadLocal()
+    {
         {
             try
             {
