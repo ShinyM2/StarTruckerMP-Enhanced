@@ -27,5 +27,12 @@ namespace StarTruckMP.Shared.Dto
         /// <summary>The sender's own clock at the time of the reading, relayed untouched; see the command.</summary>
         [Key(8)]
         public long SentAt { get; set; }
+
+        /// <summary>0 player, 1 truck, 2 trailer; see the command.</summary>
+        [Key(9)]
+        public byte Kind { get; set; }
+
+        [Key(10)]
+        public byte Index { get; set; }
     }
 }

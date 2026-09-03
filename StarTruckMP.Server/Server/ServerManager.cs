@@ -229,6 +229,7 @@ public class ServerManager
         ProcessIncomingQueue();
         BroadcastPings();
         ProcessOutgoingQueue();
+        ProcessKicks();
     }
 
     /// <summary>
@@ -320,6 +321,9 @@ public class ServerManager
                 break;
             case PacketType.UpdateTrailer:
                 HandleUpdateTrailer(packet.PeerId, player, packet.Raw);
+                break;
+            case PacketType.TruckState:
+                HandleTruckState(packet.PeerId, player, packet.Raw);
                 break;
             default:
                 _logger.LogWarning("Unhandled packet type {PacketType} from peer {PeerId}", packet.PacketType, packet.PeerId);
@@ -445,8 +449,59 @@ public class ServerManager
             },
             TrailerLivery = player.TrailerLivery,
             TrailersCount = player.TrailerCount,
-            TrailerCargoTypeId = player.TrailerCargoTypeId
+            TrailerCargoTypeId = player.TrailerCargoTypeId,
+            Headlights = player.Headlights
         };
+    }
+
+    private void HandleTruckState(int peerId, Player player, byte[] raw)
+    {
+        var state = PacketSerializer.Deserialize<TruckStateCmd>(raw);
+        player.Headlights = state.Headlights;
+
+        var update = new TruckStateDto { NetId = peerId, Headlights = state.Headlights };
+        QueueSendReliableToAllExcept(update.Serialize(PacketType.TruckState), peerId);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // For the admin page
+    // ---------------------------------------------------------------------------------------
+
+    public sealed record ChatRecord(DateTime At, int NetId, string Name, string Message, bool SectorOnly);
+
+    private const int ChatHistoryLimit = 200;
+    private readonly Queue<ChatRecord> _chatHistory = new();
+    private readonly object _chatLock = new();
+    private readonly ConcurrentQueue<int> _kicks = new();
+
+    /// <summary>The last couple of hundred chat lines, oldest first.</summary>
+    public ChatRecord[] RecentChat()
+    {
+        lock (_chatLock) return _chatHistory.ToArray();
+    }
+
+    /// <summary>Drops a player on the next poll; the disconnect has to happen on the network thread.</summary>
+    public void Kick(int peerId) => _kicks.Enqueue(peerId);
+
+    private void ProcessKicks()
+    {
+        while (_kicks.TryDequeue(out var peerId))
+        {
+            var peer = _server.GetPeerById(peerId);
+            if (peer is null) continue;
+
+            _logger.LogInformation("Peer {PeerId} kicked from the admin page", peerId);
+            peer.Disconnect();
+        }
+    }
+
+    private void RememberChat(int netId, string name, string message, bool sectorOnly)
+    {
+        lock (_chatLock)
+        {
+            _chatHistory.Enqueue(new ChatRecord(DateTime.UtcNow, netId, name, message, sectorOnly));
+            while (_chatHistory.Count > ChatHistoryLimit) _chatHistory.Dequeue();
+        }
     }
 
     private void HandleProtocolHello(int peerId, Player player, byte[] raw)
@@ -536,7 +591,12 @@ public class ServerManager
     {
         var positionData = PacketSerializer.Deserialize<UpdatePositionCmd>(raw);
 
-        if (positionData.IsTruck)
+        // A trailer's position is relayed, not remembered: a late joiner rebuilds the train from
+        // the trailer update and the stream that follows.
+        if (positionData.Kind == 2)
+        {
+        }
+        else if (positionData.IsTruck)
         {
             player.TruckPosition = positionData.Position;
             player.TruckRotation = positionData.Rotation;
@@ -569,7 +629,9 @@ public class ServerManager
             IsTruck = positionData.IsTruck,
             InSeat = positionData.InSeat,
             Seq = positionData.Seq,
-            SentAt = positionData.SentAt
+            SentAt = positionData.SentAt,
+            Kind = positionData.Kind,
+            Index = positionData.Index
         };
 
         // Only players sharing this sector can see the sender, so there is no point paying for
@@ -589,6 +651,8 @@ public class ServerManager
         var text = new string((chat.Message ?? string.Empty).Where(c => !char.IsControl(c)).ToArray()).Trim();
         if (text.Length == 0) return;
         if (text.Length > MaxChatLength) text = text[..MaxChatLength];
+
+        RememberChat(peerId, string.IsNullOrWhiteSpace(player.Name) ? $"Player #{peerId}" : player.Name, text, chat.SectorOnly);
 
         var payload = new ChatDto
         {

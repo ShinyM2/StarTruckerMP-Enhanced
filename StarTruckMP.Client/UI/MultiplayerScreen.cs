@@ -70,6 +70,11 @@ internal static class MultiplayerScreen
     private static GameObject _radioVolumeRow;
     private static GameObject _radioEffectRow;
     private static GameObject _muteDialogueRow;
+    private static GameObject _nearbyRadiosRow;
+    private static GameObject _updatesRow;
+    private static GameObject _updateRow;
+    private static GameObject _copyAddressRow;
+    private static float _addressCopiedUntil;
 
     /// <summary>Set while the chat-key row is waiting for the player to press its replacement.</summary>
     private static bool _listening;
@@ -302,6 +307,7 @@ internal static class MultiplayerScreen
         LabelledRow(Page.Root, "root.player", () => Open(Page.Player));
         LabelledRow(Page.Root, "root.display", () => Open(Page.Display));
         LabelledRow(Page.Root, "root.radio", () => Open(Page.Voice));
+        _updateRow = InfoRow(Page.Root);
         BackRow(Page.Root, Hide);
 
         // Player.
@@ -309,6 +315,7 @@ internal static class MultiplayerScreen
         _portField = TextRow(Page.Player, Strings.Get("player.port"), App.ServerPort.Value);
         LabelledRow(Page.Player, "player.connect", Connect);
         _statusRow = InfoRow(Page.Player);
+        _copyAddressRow = ActionRow(Page.Player, string.Empty, CopyAddress);
         BackRow(Page.Player, () => Open(Page.Root));
 
         // Host.
@@ -340,6 +347,12 @@ internal static class MultiplayerScreen
         _chatKeyRow = ActionRow(Page.Display, string.Empty, () =>
         {
             _listening = !_listening;
+            Refresh();
+        });
+
+        _updatesRow = ActionRow(Page.Display, string.Empty, () =>
+        {
+            App.CheckForUpdates.Value = !App.CheckForUpdates.Value;
             Refresh();
         });
 
@@ -382,6 +395,12 @@ internal static class MultiplayerScreen
         _muteDialogueRow = ActionRow(Page.Voice, string.Empty, () =>
         {
             App.MuteRadioDuringDialogue.Value = !App.MuteRadioDuringDialogue.Value;
+            Refresh();
+        });
+
+        _nearbyRadiosRow = ActionRow(Page.Voice, string.Empty, () =>
+        {
+            App.HearNearbyRadios.Value = !App.HearNearbyRadios.Value;
             Refresh();
         });
 
@@ -898,6 +917,24 @@ internal static class MultiplayerScreen
 
         if (_statusRow != null) SetRowText(_statusRow, StatusLine());
 
+        if (_copyAddressRow != null)
+        {
+            SetRowText(_copyAddressRow, Time.unscaledTime < _addressCopiedUntil
+                ? Strings.Get("host.copied")
+                : Strings.Get("player.copy"));
+        }
+
+        if (_updateRow != null)
+        {
+            var available = UpdateCheck.Available;
+            var show = available != null;
+            if (_updateRow.activeSelf != show && _page == Page.Root) _updateRow.SetActive(show);
+            if (show) SetRowText(_updateRow, Strings.Get("update.available", available));
+        }
+
+        if (_updatesRow != null)
+            SetRowValue(_updatesRow, Strings.Get("display.updates"), OnOff(App.CheckForUpdates.Value));
+
         if (_hostToggleRow != null)
         {
             SetRowValue(_hostToggleRow, Strings.Get("host.server"), HostControl.IsHosting
@@ -1015,6 +1052,28 @@ internal static class MultiplayerScreen
 
         if (_muteDialogueRow != null)
             SetRowValue(_muteDialogueRow, Strings.Get("voice.mutedialogue"), OnOff(App.MuteRadioDuringDialogue.Value));
+
+        if (_nearbyRadiosRow != null)
+            SetRowValue(_nearbyRadiosRow, Strings.Get("voice.trucks"), OnOff(App.HearNearbyRadios.Value));
+    }
+
+    /// <summary>The address as typed, for passing on to a friend who should join the same server.</summary>
+    private static void CopyAddress()
+    {
+        var address = _addressField != null && !string.IsNullOrWhiteSpace(_addressField.Text) ? _addressField.Text.Trim() : App.ServerAddress.Value;
+        var port = _portField != null && !string.IsNullOrWhiteSpace(_portField.Text) ? _portField.Text.Trim() : App.ServerPort.Value;
+
+        try
+        {
+            GUIUtility.systemCopyBuffer = $"{address}:{port}";
+            _addressCopiedUntil = Time.unscaledTime + 3f;
+        }
+        catch (Exception ex)
+        {
+            App.Log.LogWarning($"[MP screen] Clipboard copy failed: {ex.Message}");
+        }
+
+        Refresh();
     }
 
     /// <summary>

@@ -126,6 +126,9 @@ public class MainMenuScreen_Patch
         if (field == null) return;
 
         var stamp = $"StarTruckMP {PluginInfo.PLUGIN_VERSION}";
+        if (UpdateCheck.Available != null)
+            stamp += "  <color=#EFC806>" + Strings.Get("update.short", UpdateCheck.Available) + "</color>";
+
         if (field.text != null && field.text.Contains("StarTruckMP")) return;
 
         field.text = string.IsNullOrWhiteSpace(field.text) ? stamp : $"{field.text}    {stamp}";

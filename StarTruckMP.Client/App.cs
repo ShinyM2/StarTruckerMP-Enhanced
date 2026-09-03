@@ -18,6 +18,8 @@ public static class App
     public static ConfigEntry<float> RadioVolume;
     public static ConfigEntry<bool> MuteRadioDuringDialogue;
     public static ConfigEntry<int> RadioEffectStrength;
+    public static ConfigEntry<bool> HearNearbyRadios;
+    public static ConfigEntry<bool> CheckForUpdates;
     public static ConfigEntry<bool> IgnoreSslValidation;
     public static ConfigEntry<bool> ShowNameplates;
     public static ConfigEntry<bool> RemoteCollisions;
@@ -37,6 +39,8 @@ public static class App
         MuteRadioDuringDialogue = config.Bind("Audio", "MuteRadioDuringDialogue", true, "Mute other players while the game's own radio conversation is running, so an NPC call is not talked over. Your talk button never transmits during one either way.");
         RadioEffectStrength = config.Bind("Audio", "RadioEffect", 2, "How much other players' voices are coloured like a CB radio: 0 = clean voice, 1 = band and compression only, 2 = the full set with a driven, clipping input stage and squelch clicks.");
         IgnoreSslValidation = config.Bind("Connection", "IgnoreSslValidation", true, "Accept the server's self-signed certificate. Every StarTruckMP server generates one on first start, so this stays on unless the host installed a real certificate.");
+        HearNearbyRadios = config.Bind("Audio", "HearNearbyRadios", true, "Also play another player's radio voice from their truck when it is close by, so a transmission from the truck beside you sounds like it comes from there too.");
+        CheckForUpdates = config.Bind("Multiplayer", "CheckForUpdates", true, "Ask GitHub once at startup whether a newer release exists and say so in the menu.");
         ShowNameplates = config.Bind("Multiplayer", "ShowNameplates", true, "Show other players' names above their trucks.");
         RemoteCollisions = config.Bind("Multiplayer", "RemoteCollisions", false, "Let other players' trucks collide with you. Off by default: with any latency the collision happens where the truck is not.");
         GhostMode = config.Bind("Multiplayer", "GhostMode", true, "Fade other players' trucks out when they are in the way at a warp gate or a docking bay. Your own truck is never touched.");

@@ -62,7 +62,15 @@ public class CbRadioSpeakerComponent : MonoBehaviour
         public PcmStreamPlayer Player;
         public long LastFrameTicks;
         public bool OnAir;
+
+        /// <summary>The same voice again, from the speaker's own truck when it is near, so a transmission from the cab beside you sounds like it comes from there too.</summary>
+        public PcmStreamPlayer TruckPlayer;
+        public GameObject TruckHost;
     }
+
+    /// <summary>How far the voice from another truck's cab carries, in metres.</summary>
+    private const float TruckVoiceRange = 60f;
+    private const float TruckVoiceVolume = 0.6f;
 
     private void Awake()
     {
@@ -116,23 +124,62 @@ public class CbRadioSpeakerComponent : MonoBehaviour
                 Configure(sender.Player.Source);
             }
 
+            FollowTruck(sender);
+
             while (sender.Pending.TryDequeue(out var frame))
+            {
                 sender.Player.Enqueue(frame);
+                sender.TruckPlayer?.Enqueue((float[])frame.Clone());
+            }
 
             // The other side let go of the button: close the squelch behind them.
             if (sender.OnAir && now - sender.LastFrameTicks > BurstGapMs)
             {
                 sender.OnAir = false;
-                sender.Player.Enqueue(sender.SquelchEffect.Squelch(opening: false));
+                var tail = sender.SquelchEffect.Squelch(opening: false);
+                sender.Player.Enqueue(tail);
+                sender.TruckPlayer?.Enqueue((float[])tail.Clone());
             }
 
             sender.Player.Source.mute = mute;
             sender.Player.Source.volume = volume;
             sender.Player.Pump();
 
+            if (sender.TruckPlayer != null)
+            {
+                sender.TruckPlayer.Source.mute = mute;
+                sender.TruckPlayer.Source.volume = volume * TruckVoiceVolume;
+                sender.TruckPlayer.Pump();
+            }
+
             if (!sender.OnAir && now - sender.LastFrameTicks > ForgetAfterMs)
                 Retire(sender.NetId);
         }
+    }
+
+    /// <summary>
+    /// Keeps a second player on the sender's truck while that truck is in our sector and the
+    /// setting is on; drops it when the truck goes, or is rebuilt, or the setting goes off.
+    /// </summary>
+    private void FollowTruck(Sender sender)
+    {
+        var truck = App.HearNearbyRadios.Value ? NetworkEventsComponent.RemoteTruck(sender.NetId) : null;
+        if (truck == sender.TruckHost) return;
+
+        sender.TruckPlayer?.Dispose();
+        sender.TruckPlayer = null;
+        sender.TruckHost = truck;
+
+        if (truck == null) return;
+
+        sender.TruckPlayer = new PcmStreamPlayer(truck, $"voice_truck_{sender.NetId}_ring");
+        var source = sender.TruckPlayer.Source;
+        source.spatialBlend = 1f;
+        source.rolloffMode = AudioRolloffMode.Logarithmic;
+        source.minDistance = 4f;
+        source.maxDistance = TruckVoiceRange;
+        source.spread = 30f;
+        source.dopplerLevel = 0f;
     }
 
     /// <summary>The player's radio volume as far as an <see cref="AudioSource"/> can take it (0..1).</summary>
@@ -241,6 +288,9 @@ public class CbRadioSpeakerComponent : MonoBehaviour
     {
         sender.Player?.Dispose();
         sender.Player = null;
+        sender.TruckPlayer?.Dispose();
+        sender.TruckPlayer = null;
+        sender.TruckHost = null;
 
         if (sender.Decoder is IDisposable disposable)
             disposable.Dispose();

@@ -35,6 +35,7 @@ public class NetworkEventsComponent : MonoBehaviour
         Network.OnTrailerUpdate += HandleTrailerUpdate;
         Network.OnPlayerNameUpdate += HandlePlayerNameUpdate;
         Network.OnPingsUpdate += HandlePings;
+        Network.OnTruckStateUpdate += HandleTruckState;
         GameEventsComponent.ArrivedAtSector += HandleOwnSectorChanged;
         OverlayManager.MessageReceived += HandleOverlayMessage;
 
@@ -57,6 +58,7 @@ public class NetworkEventsComponent : MonoBehaviour
         public string Sector = "none";
         public string Livery = string.Empty;
         public TruckAppearance Appearance;
+        public bool Headlights;
         public int TrailerCount;
         public string TrailerLivery = string.Empty;
         public string TrailerCargoTypeId = string.Empty;
@@ -91,6 +93,9 @@ public class NetworkEventsComponent : MonoBehaviour
         public GameObject TruckObj { get; set; }
         public GameObject PlayerObj { get; set; }
         public GameObject SuitObj { get; set; }
+
+        /// <summary>Trailer containers taken off the NPC cab and driven by their own position stream, by index in the train.</summary>
+        public Dictionary<int, GameObject> Trailers { get; } = new();
     }
 
     private NetPlayer CreateNetPlayer(int netId)
@@ -128,6 +133,7 @@ public class NetworkEventsComponent : MonoBehaviour
             // Replay the paint and cargo we were told about earlier; the truck prefab above was
             // already picked for the right number of containers, so only the contents are left.
             TruckAppearanceSync.Apply(player.TruckObj, state.Livery, state.Appearance);
+            ScheduleHeadlights(player.TruckObj, state.Headlights);
 
             ApplyTrailerContainers(netId, player, state);
         }
@@ -198,6 +204,9 @@ public class NetworkEventsComponent : MonoBehaviour
             DestroyImmediate(player.TruckObj);
         }
 
+        // The trailers were taken off the old cab and live on their own; the new cab brings new ones.
+        DestroyTrailers(player);
+
         // recreate with same data
         player.TruckObj = TruckFactory.CreatePlayerTruck(cargoCount, currentPos, currentRot);
         if (player.TruckObj == null)
@@ -211,6 +220,7 @@ public class NetworkEventsComponent : MonoBehaviour
         _remoteTrucks[netId] = player.TruckObj;
 
         TruckAppearanceSync.Apply(player.TruckObj, state.Livery, state.Appearance);
+        ScheduleHeadlights(player.TruckObj, state.Headlights);
         ConfigureRemoteTruckPhysics(player.TruckObj);
         // The old truck carried the nameplate, so the rebuilt one needs its own.
         AttachNameplate(player.TruckObj, player.PlayerName, netId);
@@ -233,10 +243,18 @@ public class NetworkEventsComponent : MonoBehaviour
     }
 
     /// <summary>
-    /// Highest sequence number seen per movement stream, keyed by net id and whether the
-    /// stream is the truck or the player on foot.
+    /// Highest sequence number seen per movement stream, keyed by net id, what moved (player,
+    /// truck, trailer) and which trailer.
     /// </summary>
-    private readonly Dictionary<(int NetId, bool IsTruck), uint> _lastMoveSeq = new();
+    private readonly Dictionary<(int NetId, byte Kind, byte Index), uint> _lastMoveSeq = new();
+
+    /// <summary>What a packet is about: its Kind, or for an older sender the IsTruck flag.</summary>
+    private static byte KindOf(UpdatePositionDto dto) => dto.Kind != 0 ? dto.Kind : (byte)(dto.IsTruck ? 1 : 0);
+
+    // Packet loss, measured on the truck streams: every gap in a sequence is a packet that never came.
+    private int _movesReceived;
+    private int _movesLost;
+    private float _nextLossWindow;
 
     /// <summary>
     /// True when this packet is newer than the last one applied for its stream. Movement is sent
@@ -246,12 +264,32 @@ public class NetworkEventsComponent : MonoBehaviour
     /// </summary>
     private bool IsFreshMove(UpdatePositionDto dto)
     {
-        var key = (dto.NetId, dto.IsTruck);
+        var kind = KindOf(dto);
+        var key = (dto.NetId, kind, dto.Index);
 
-        if (_lastMoveSeq.TryGetValue(key, out var last) && (int)(dto.Seq - last) <= 0)
-            return false;
+        if (_lastMoveSeq.TryGetValue(key, out var last))
+        {
+            var gap = (int)(dto.Seq - last);
+            if (gap <= 0) return false;
+
+            if (kind == 1)
+            {
+                _movesReceived++;
+                _movesLost += gap - 1;
+            }
+        }
 
         _lastMoveSeq[key] = dto.Seq;
+
+        if (Time.unscaledTime >= _nextLossWindow)
+        {
+            _nextLossWindow = Time.unscaledTime + 5f;
+            var total = _movesReceived + _movesLost;
+            MultiplayerState.PacketLossPercent = total > 0 ? Mathf.RoundToInt(100f * _movesLost / total) : 0;
+            _movesReceived = 0;
+            _movesLost = 0;
+        }
+
         return true;
     }
 
@@ -262,7 +300,13 @@ public class NetworkEventsComponent : MonoBehaviour
             if (!_players.TryGetValue(positionDto.NetId, out NetPlayer player)) return;
             if (!IsFreshMove(positionDto)) return;
 
-            if (positionDto.IsTruck && player.TruckObj != null)
+            var kind = KindOf(positionDto);
+
+            if (kind == 2)
+            {
+                ApplyTrailerMove(positionDto.NetId, player, positionDto);
+            }
+            else if (kind == 1 && player.TruckObj != null)
             {
                 var controller = player.TruckObj.GetComponent<TruckControllerComponent>();
                 if (controller != null)
@@ -273,7 +317,7 @@ public class NetworkEventsComponent : MonoBehaviour
                         positionDto.SentAt);
                 else App.Log.LogError("TruckControllerComponent is NULL");
             }
-            else if (!positionDto.IsTruck && player.PlayerObj != null)
+            else if (kind == 0 && player.PlayerObj != null)
             {
                 player.PlayerObj.transform.SetPositionAndRotation(
                     FloatingOrigin.ToScene(Vec(positionDto.Position)),
@@ -286,6 +330,93 @@ public class NetworkEventsComponent : MonoBehaviour
                     rigid.angularVelocity = Vec(positionDto.AngVel);
                 }
             }
+        }), null);
+    }
+
+    /// <summary>
+    /// Moves a remote player's trailer where its owner's trailer is.
+    ///
+    /// The NPC cab carries its containers rigidly in slots; the owner's trailer swings on a real
+    /// joint. So the first time a trailer stream arrives, the slot's container is taken out of
+    /// the cab's hierarchy and given the same interpolating mover the cab has. The container is
+    /// spawned asynchronously by the game, so until it exists the packet is simply skipped.
+    /// </summary>
+    private void ApplyTrailerMove(int netId, NetPlayer player, UpdatePositionDto dto)
+    {
+        if (player.TruckObj == null) return;
+
+        if (!player.Trailers.TryGetValue(dto.Index, out var trailer) || trailer == null)
+        {
+            var slots = player.TruckObj.GetComponentsInChildren<AIVehicleContainerSlot>(true);
+            if (slots == null || dto.Index >= slots.Length) return;
+
+            var container = slots[dto.Index].m_currentContainer;
+            if (container == null) return;
+
+            container.transform.SetParent(null, true);
+
+            var body = container.GetComponent<Rigidbody>();
+            if (body != null)
+            {
+                body.isKinematic = true;
+                body.interpolation = RigidbodyInterpolation.Interpolate;
+                body.detectCollisions = App.RemoteCollisions.Value;
+            }
+
+            var mover = container.GetComponent<TruckControllerComponent>() ?? container.AddComponent<TruckControllerComponent>();
+            mover.NetId = netId;
+
+            player.Trailers[dto.Index] = container;
+            App.Log.LogInfo($"({netId}) Trailer {dto.Index} now follows its own position stream ({slots.Length} slot(s) on the cab).");
+            trailer = container;
+        }
+
+        var controller = trailer.GetComponent<TruckControllerComponent>();
+        controller?.ApplyNetworkState(Vec(dto.Position), Quat(dto.Rotation), Vec(dto.Velocity), dto.SentAt);
+    }
+
+    private static void DestroyTrailers(NetPlayer player)
+    {
+        foreach (var trailer in player.Trailers.Values)
+        {
+            if (trailer != null) Destroy(trailer);
+        }
+
+        player.Trailers.Clear();
+    }
+
+    // Headlights are applied twice: at once, and again a second later when the light switchers
+    // have run their Start and made the glow material the second pass needs.
+    private readonly List<(float At, GameObject Truck, bool On)> _headlightsLater = new();
+
+    private void ScheduleHeadlights(GameObject truck, bool on)
+    {
+        TruckStateSyncComponent.ApplyHeadlights(truck, on);
+        _headlightsLater.Add((Time.unscaledTime + 1f, truck, on));
+    }
+
+    private void Update()
+    {
+        if (_headlightsLater.Count == 0) return;
+
+        for (var i = _headlightsLater.Count - 1; i >= 0; i--)
+        {
+            var (at, truck, on) = _headlightsLater[i];
+            if (Time.unscaledTime < at) continue;
+
+            _headlightsLater.RemoveAt(i);
+            if (truck != null) TruckStateSyncComponent.ApplyHeadlights(truck, on);
+        }
+    }
+
+    private void HandleTruckState(TruckStateDto state)
+    {
+        _mainThreadContext.Post(new Action<Object>(_ =>
+        {
+            StateOf(state.NetId).Headlights = state.Headlights;
+
+            if (_players.TryGetValue(state.NetId, out NetPlayer player) && player.TruckObj != null)
+                TruckStateSyncComponent.ApplyHeadlights(player.TruckObj, state.Headlights);
         }), null);
     }
 
@@ -616,6 +747,7 @@ public class NetworkEventsComponent : MonoBehaviour
         if (!_players.TryGetValue(netId, out NetPlayer player)) return;
         if (player.TruckObj != null) player.TruckObj.SetActive(false);
         if (player.PlayerObj != null) player.PlayerObj.SetActive(false);
+        DestroyTrailers(player);
         _players.Remove(netId);
         _remoteTrucks.Remove(netId);
     }
@@ -627,8 +759,10 @@ public class NetworkEventsComponent : MonoBehaviour
             lock (netId.ToString())
             {
                 _remote.Remove(netId);
-                _lastMoveSeq.Remove((netId, true));
-                _lastMoveSeq.Remove((netId, false));
+                foreach (var key in new List<(int, byte, byte)>(_lastMoveSeq.Keys))
+                {
+                    if (key.Item1 == netId) _lastMoveSeq.Remove(key);
+                }
                 DespawnPlayer(netId);
             }
 
@@ -672,6 +806,7 @@ public class NetworkEventsComponent : MonoBehaviour
         Network.OnTrailerUpdate -= HandleTrailerUpdate;
         Network.OnPlayerNameUpdate -= HandlePlayerNameUpdate;
         Network.OnPingsUpdate -= HandlePings;
+        Network.OnTruckStateUpdate -= HandleTruckState;
         GameEventsComponent.ArrivedAtSector -= HandleOwnSectorChanged;
         OverlayManager.MessageReceived -= HandleOverlayMessage;
     }

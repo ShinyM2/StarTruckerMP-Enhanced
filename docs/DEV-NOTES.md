@@ -93,6 +93,13 @@ A remote truck is an NPC cab. Its `AIVehicleCustomiser.m_cabLiveryApplier` is a 
 
 Whether `SetColorOverrides` survives a later `AssignCabLivery` (the livery loads asynchronously) is also unverified; the overrides are set before the livery is assigned on that assumption.
 
+### Remote trucks: what else is driven, and how
+
+- **Movement** rides the sender's clock (`UpdatePositionCmd.SentAt`, `Environment.TickCount64` ms). `TruckControllerComponent` buffers states and draws 120–350 ms behind live (`MinDelay`/`MaxDelay`, growing when the buffer runs dry). Positions are read in `FixedUpdate` on the game thread; the old background threads could read a position and the floating-origin offset on either side of a recentre.
+- **Trailers** are their own stream (`Kind = 2`, `Index`). The receiver takes `AIVehicleContainerSlot.m_currentContainer` out of the NPC cab's hierarchy and gives it a `TruckControllerComponent` (no Rigidbody: it moves the transform). The container spawns asynchronously, so the first packets are skipped until it exists. Only the first hitched trailer is sent; how to enumerate a train from `StarTruck.hitchedTrailer` is **unverified**.
+- **Headlights** (`TruckStateCmd.Headlights`) come from `ExteriorLightSwitcher.m_binding.Get()` on the player's truck. On the NPC cab the switchers are disabled and their `m_objectsToToggle`, `m_glowRenderers` and `m_glowMaterialInst` emission are toggled directly, because the binding asset may be shared with the player's own truck. Applied twice, the second time a second later once `Start` has made the glow material. Whether the NPC cab carries `ExteriorLightSwitcher` at all is **unverified**.
+- **Galactic map** (`MapPlayers_Patch`): sector buttons are matched to the wire's sector id by the first number in `SectorMetadata.sectorName` / `shortSectorId` / `displayNameId` / `SectorId.name`. The first button's identifiers are logged once as `[Map] Sector button …` so the matching can be checked.
+
 ### The game's string tables
 
 `Star Trucker_Data\StreamingAssets\XML\Strings\<lang>.xml` are zip files holding `strings.xml` (`<string id="STR_BACK">Back</string>`). Languages: en, ru, de, fr, es, es-419, pt-br, pl, it (partial), zh-cn, zh-hant. `StringTable.language` returns the code; `StringTable.Get("STR_BACK")` etc. is what `Strings.Back/On/Off` use so those words match the game's menus.

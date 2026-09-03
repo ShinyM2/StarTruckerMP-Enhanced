@@ -45,4 +45,8 @@ public class Player(int id)
     public int TrailerCount { get; set; }
     public string TrailerLivery { get; set; } = string.Empty;
     public string TrailerCargoTypeId { get; set; } = string.Empty;
+
+    public bool Headlights { get; set; }
+
+    public DateTime ConnectedAt { get; } = DateTime.UtcNow;
 }

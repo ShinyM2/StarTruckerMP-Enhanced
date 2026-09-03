@@ -15,4 +15,5 @@ public class PlayerSnapshotDto
     public int TrailersCount { get; set; }
     public string TrailerLivery { get; set; } = string.Empty;
     public string TrailerCargoTypeId { get; set; } = string.Empty;
+    public bool Headlights { get; set; }
 }

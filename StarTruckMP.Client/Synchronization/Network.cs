@@ -26,6 +26,7 @@ public class Network
     public static event Action<int, string> OnPlayerNameUpdate;
     public static event Action<ChatDto> OnChatReceived;
     public static event Action<PingsDto> OnPingsUpdate;
+    public static event Action<TruckStateDto> OnTruckStateUpdate;
 
     private static bool _isInitialized;
     private static NetManager _client;
@@ -322,6 +323,9 @@ public class Network
                 case PacketType.UpdateTrailer:
                     HandleTrailerUpdate(raw.Deserialize<UpdateTrailerDto>());
                     break;
+                case PacketType.TruckState:
+                    OnTruckStateUpdate?.Invoke(raw.Deserialize<TruckStateDto>());
+                    break;
                 case PacketType.UpdateLivery:
                     HandleUpdateLivery(raw.Deserialize<UpdateLiveryDto>());
                     break;
@@ -417,6 +421,8 @@ public class Network
             LiveryId = snapshot.TrailerLivery,
             CargoTypeId = snapshot.TrailerCargoTypeId
         });
+
+        OnTruckStateUpdate?.Invoke(new TruckStateDto { NetId = snapshot.NetId, Headlights = snapshot.Headlights });
     }
 
     private static void HandleSyncPlayers(SyncPlayersDto syncPlayers)

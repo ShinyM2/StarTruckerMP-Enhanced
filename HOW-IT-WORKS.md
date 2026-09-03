@@ -14,14 +14,16 @@ Everyone plays **their own save**: their own money, jobs, progress, truck. The m
 
 Every 33 ms your truck sends its position, rotation and velocity to the server. The server passes that to whoever is in the same sector, and a copy of your truck appears for them, with your paint, your trailer and your name above the cab. Between packets the copy carries its motion forward by the last velocity, so at cruising speed it does not trail.
 
-Synchronised: truck position, the truck's whole look (livery, base material, colours, bolt-on parts, wear and dirt), trailer (count and cargo), name, chat, radio.
+Synchronised: truck position, the truck's whole look (livery, base material, colours, bolt-on parts, wear and dirt), headlights, trailer (count, cargo and where it swings), name, chat, radio.
 Not synchronised: cargo in the bed, money, jobs, purchases, station state, the spacesuited player outside the truck (partly).
+
+Positions travel with the sender's own clock. The copy is drawn where the owner was about 120 ms ago, interpolated between the two real positions around that moment, so it moves as smoothly as the owner's truck whatever the network did to the packets. The header of the cab monitor's multiplayer page shows the ping, the share of movement packets lost and that delay.
 
 ## Sectors
 
 The game keeps only one sector in memory: the one you are in. So another truck can only appear in **your** sector. The server knows who is where and sends movement only within a sector.
 
-Who is in which sector is in the panel on the right (grey rows are in other sectors) and on the right-hand cab monitor. No need to reconnect: arrive in the same sector and you see each other.
+Who is in which sector is in the panel on the right (grey rows are in other sectors), on the right-hand cab monitor, and on the galactic map, where each player's name sits under their sector. No need to reconnect: arrive in the same sector and you see each other.
 
 The easiest meeting point is a new game: everybody's starting sector is the same.
 

@@ -42,6 +42,7 @@ public class Plugin : BasePlugin
         
         App.Log = Log;
         App.Configure(Config);
+        UpdateCheck.Start();
 
         SetupXboxAuth();
         SetupSteamAuth();
@@ -56,6 +57,7 @@ public class Plugin : BasePlugin
         Harmony.CreateAndPatchAll(typeof(MainMenuScreen_Patch));
         Harmony.CreateAndPatchAll(typeof(MonitorChannelSwitcher_Patch));
         Harmony.CreateAndPatchAll(typeof(MonitorOverlaySwitcher_Patch));
+        Harmony.CreateAndPatchAll(typeof(MapPlayers_Patch));
         Harmony.CreateAndPatchAll(typeof(PauseScreen_Patch));
         
         Log.LogInfo($"Plugin {PluginInfo.PLUGIN_GUID} loaded.");
@@ -82,6 +84,7 @@ public class Plugin : BasePlugin
         ClassInjector.RegisterTypeInIl2Cpp<NetworkEventsComponent>();
         ClassInjector.RegisterTypeInIl2Cpp<VoiceInputComponent>();
         ClassInjector.RegisterTypeInIl2Cpp<AppearanceSyncComponent>();
+        ClassInjector.RegisterTypeInIl2Cpp<TruckStateSyncComponent>();
         ClassInjector.RegisterTypeInIl2Cpp<CbRadioPttComponent>();
         ClassInjector.RegisterTypeInIl2Cpp<CbRadioSpeakerComponent>();
         ClassInjector.RegisterTypeInIl2Cpp<NameplateComponent>();
@@ -92,6 +95,7 @@ public class Plugin : BasePlugin
         AddComponent<MultiplayerUiComponent>();
         AddComponent<VoiceInputComponent>();
         AddComponent<AppearanceSyncComponent>();
+        AddComponent<TruckStateSyncComponent>();
     }
 
     #region Steam auth

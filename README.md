@@ -36,11 +36,13 @@ The mod only connects once a save is loaded; in the main menu it just waits.
 
 - There is no shared world. Everyone plays their **own** save; the mod syncs trucks, their paint and parts, trailers, names, chat and the radio. Money and progress stay yours.
 - You only see each other **in the same sector**. The panel on the right and the right-hand cab monitor show who is where. Agree on a sector and the others appear by themselves.
-- **Trucks look like their owners made them**: livery, base material, the colours picked at the paint shop, the exhausts, grill, ornament, sensors, plate and decal where the game lets them be shown, plus wear and dirt.
+- **Trucks look like their owners made them**: livery, base material, the colours picked at the paint shop, the exhausts, grill, ornament, sensors, plate and decal where the game lets them be shown, plus wear and dirt. Their headlights switch with the owner's, and a hitched trailer swings behind the cab the way the owner's does.
+- **Nameplates** carry the player's colour and the distance to the truck; the same names, in the same colours, sit under their sectors on the galactic map.
 - **CB radio.** Pick up the handset in the cab and hold the game's talk button; everyone on the server hears you with a proper radio sound, squelch bursts included. While the game's own radio conversation is running, the radio belongs to the game. A marker beside a name on the monitor and above a truck shows who is talking.
 - **F2** opens the multiplayer menu over the game (connection, chat, settings). **Esc** closes it.
 - **Chat**: sit in the driver's seat, switch the right-hand monitor to the docking camera, press **Enter** (rebindable), type, Enter to send. Standing up closes the line.
-- **Settings**: Multiplayer → Display (nameplates, collisions, ghosting at gates, chat key) and Multiplayer → Radio and microphone (microphone, test, volumes, noise suppression, radio sound, mute during dialogue). The menu speaks the game's language: English, Russian, German, French, Spanish, Portuguese, Polish, Italian and Chinese.
+- **Settings**: Multiplayer → Display (nameplates, collisions, ghosting at gates, chat key, update check) and Multiplayer → Radio and microphone (microphone, test, volumes, noise suppression, radio sound, mute during dialogue, radios in nearby trucks). The same settings are in the F2 menu. The menu speaks the game's language: English, Russian, German, French, Spanish, Portuguese, Polish, Italian and Chinese.
+- The mod checks GitHub once at startup and says in the menu when a newer release is out.
 
 More in [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
 
@@ -55,6 +57,8 @@ More in [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
 Either way, friends need your **public IP** and port **7777**, and your router must forward **7777 over TCP and UDP** to your computer. If forwarding is impossible, any VPN such as Radmin or ZeroTier works — give friends the VPN address instead.
 
 By default the server takes clients at their word. To have it really check Steam tickets, put a `SteamWebApiKey` into `server.json` — get one at [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey).
+
+**Admin page.** `https://<server address>:7777/admin` shows who is online, where and with what ping, the chat and the log, with a kick button per player. Set `ApiAdminUsername` and `ApiAdminPassword` in `server.json` first: the page stays disabled while the password is the default. The certificate is self-signed, so the browser will warn once.
 
 ---
 

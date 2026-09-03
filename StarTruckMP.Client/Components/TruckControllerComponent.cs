@@ -85,7 +85,7 @@ public class TruckControllerComponent : MonoBehaviour
 
     void FixedUpdate()
     {
-        if (!_hasFirstUpdate || _rb == null) return;
+        if (!_hasFirstUpdate) return;
 
         Vector3 worldPosition;
         Quaternion rotation;
@@ -116,13 +116,23 @@ public class TruckControllerComponent : MonoBehaviour
                 _snapshots.RemoveAt(0);
 
             Sample(playback, out worldPosition, out rotation);
+            MultiplayerState.InterpolationMs = (int)(_delay * 1000);
         }
 
         // Converted every step rather than once on arrival: the scene can be recentred between
         // two packets, and a target left in stale scene coordinates would drag the truck across
         // the sector until the next update landed.
-        _rb.MovePosition(FloatingOrigin.ToScene(worldPosition));
-        _rb.MoveRotation(rotation);
+        var scenePosition = FloatingOrigin.ToScene(worldPosition);
+        if (_rb != null)
+        {
+            _rb.MovePosition(scenePosition);
+            _rb.MoveRotation(rotation);
+        }
+        else
+        {
+            // A trailer detached from its NPC cab has no body of its own to move; the transform will do.
+            transform.SetPositionAndRotation(scenePosition, rotation);
+        }
     }
 
     /// <summary>The state at a moment of the owner's time, between two known states or coasting past the last.</summary>

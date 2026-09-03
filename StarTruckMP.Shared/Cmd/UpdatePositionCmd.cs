@@ -34,5 +34,13 @@ namespace StarTruckMP.Shared.Cmd
         /// </summary>
         [Key(7)]
         public long SentAt { get; set; }
+
+        /// <summary>What moved: 0 the player on foot, 1 the truck, 2 a hitched trailer (see <see cref="Index"/>).</summary>
+        [Key(8)]
+        public byte Kind { get; set; }
+
+        /// <summary>For a trailer, its place in the train: 0 is hitched to the truck, 1 behind that, and so on.</summary>
+        [Key(9)]
+        public byte Index { get; set; }
     }
 }

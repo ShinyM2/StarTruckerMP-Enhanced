@@ -219,6 +219,30 @@ public class MultiplayerUiComponent : MonoBehaviour
         if (settings.RemoteCollisions.HasValue)
             App.RemoteCollisions.Value = settings.RemoteCollisions.Value;
 
+        if (settings.MicrophoneDevice != null && settings.MicrophoneDevice != (App.MicrophoneDeviceName.Value ?? string.Empty))
+            Audio.VoiceInputComponent.SelectDevice(settings.MicrophoneDevice);
+
+        if (settings.MicrophoneGain.HasValue)
+            App.MicrophoneGain.Value = Mathf.Clamp(settings.MicrophoneGain.Value, 0.25f, 4f);
+
+        if (settings.NoiseSuppression.HasValue)
+            App.NoiseSuppression.Value = settings.NoiseSuppression.Value;
+
+        if (settings.RadioVolume.HasValue)
+            App.RadioVolume.Value = Mathf.Clamp(settings.RadioVolume.Value, 0f, 2f);
+
+        if (settings.RadioEffect.HasValue)
+            App.RadioEffectStrength.Value = Mathf.Clamp(settings.RadioEffect.Value, 0, 2);
+
+        if (settings.MuteRadioDuringDialogue.HasValue)
+            App.MuteRadioDuringDialogue.Value = settings.MuteRadioDuringDialogue.Value;
+
+        if (settings.HearNearbyRadios.HasValue)
+            App.HearNearbyRadios.Value = settings.HearNearbyRadios.Value;
+
+        if (settings.CheckForUpdates.HasValue)
+            App.CheckForUpdates.Value = settings.CheckForUpdates.Value;
+
         App.Log.LogInfo($"[MP UI] Settings saved (address changed: {addressChanged})");
         PushSettings();
 
@@ -243,7 +267,16 @@ public class MultiplayerUiComponent : MonoBehaviour
         ServerPort = App.ServerPort.Value,
         IgnoreSslValidation = App.IgnoreSslValidation.Value,
         ShowNameplates = App.ShowNameplates.Value,
-        RemoteCollisions = App.RemoteCollisions.Value
+        RemoteCollisions = App.RemoteCollisions.Value,
+        MicrophoneDevice = App.MicrophoneDeviceName.Value ?? string.Empty,
+        MicrophoneDevices = Audio.VoiceInputComponent.Devices(),
+        MicrophoneGain = App.MicrophoneGain.Value,
+        NoiseSuppression = App.NoiseSuppression.Value,
+        RadioVolume = App.RadioVolume.Value,
+        RadioEffect = App.RadioEffectStrength.Value,
+        MuteRadioDuringDialogue = App.MuteRadioDuringDialogue.Value,
+        HearNearbyRadios = App.HearNearbyRadios.Value,
+        CheckForUpdates = App.CheckForUpdates.Value
     });
 
     private void PushStatus() => OverlayManager.PostMessage("status", new StatusState
@@ -253,7 +286,8 @@ public class MultiplayerUiComponent : MonoBehaviour
         Sector = PlayerState.Sector,
         Name = PlayerState.Name,
         Hosting = HostControl.IsHosting,
-        ServerAvailable = HostControl.ServerExe != null
+        ServerAvailable = HostControl.ServerExe != null,
+        UpdateAvailable = UpdateCheck.Available
     });
 
     private void PushChatHistory() => OverlayManager.PostMessage("chatHistory", _chatHistory);
@@ -294,6 +328,14 @@ public class MultiplayerUiComponent : MonoBehaviour
         public bool? IgnoreSslValidation { get; set; }
         public bool? ShowNameplates { get; set; }
         public bool? RemoteCollisions { get; set; }
+        public string MicrophoneDevice { get; set; }
+        public float? MicrophoneGain { get; set; }
+        public bool? NoiseSuppression { get; set; }
+        public float? RadioVolume { get; set; }
+        public int? RadioEffect { get; set; }
+        public bool? MuteRadioDuringDialogue { get; set; }
+        public bool? HearNearbyRadios { get; set; }
+        public bool? CheckForUpdates { get; set; }
     }
 
     private class SettingsState
@@ -303,6 +345,15 @@ public class MultiplayerUiComponent : MonoBehaviour
         public bool IgnoreSslValidation { get; set; }
         public bool ShowNameplates { get; set; }
         public bool RemoteCollisions { get; set; }
+        public string MicrophoneDevice { get; set; }
+        public string[] MicrophoneDevices { get; set; }
+        public float MicrophoneGain { get; set; }
+        public bool NoiseSuppression { get; set; }
+        public float RadioVolume { get; set; }
+        public int RadioEffect { get; set; }
+        public bool MuteRadioDuringDialogue { get; set; }
+        public bool HearNearbyRadios { get; set; }
+        public bool CheckForUpdates { get; set; }
     }
 
     private class StatusState
@@ -313,6 +364,9 @@ public class MultiplayerUiComponent : MonoBehaviour
         public string Name { get; set; }
         public bool Hosting { get; set; }
         public bool ServerAvailable { get; set; }
+
+        /// <summary>A newer release's version, or null when this build is current or the check is off.</summary>
+        public string UpdateAvailable { get; set; }
     }
 
     private class NoticeState

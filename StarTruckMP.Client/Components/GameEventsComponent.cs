@@ -241,6 +241,7 @@ public class GameEventsComponent : MonoBehaviour
         try
         {
             SendTruck();
+            SendTrailer();
             SendPlayer();
         }
         catch (Exception ex)
@@ -277,6 +278,44 @@ public class GameEventsComponent : MonoBehaviour
 
         _lastTruckSent = position;
         _lastTruckSendTime = Time.unscaledTime;
+    }
+
+    private uint _trailerSeq;
+    private Vector3 _lastTrailerSent;
+    private float _lastTrailerSendTime;
+
+    /// <summary>
+    /// The hitched trailer, as its own stream: it swings on a joint behind the truck, and the copy
+    /// other players see should swing the same way rather than sit bolted to the cab.
+    /// </summary>
+    private void SendTrailer()
+    {
+        var truck = _starTruck;
+        var trailer = truck != null ? truck.hitchedTrailer : null;
+        if (trailer == null) return;
+
+        trailer.transform.GetPositionAndRotation(out var position, out var rotation);
+        var moved = Vector3.Distance(_lastTrailerSent, position) > ThresholdChange;
+        if (!moved && Time.unscaledTime - _lastTrailerSendTime < HeartbeatInterval) return;
+
+        var body = trailer.rb;
+
+        Network.SendServerMessage(new UpdatePositionCmd
+        {
+            Position = ConvertToSharedVector3(FloatingOrigin.ToWorld(position)),
+            Rotation = ConvertToSharedQuaternion(rotation),
+            Velocity = ConvertToSharedVector3(body != null ? body.velocity : Vector3.zero),
+            AngVel = ConvertToSharedVector3(body != null ? body.angularVelocity : Vector3.zero),
+            IsTruck = false,
+            InSeat = false,
+            Kind = 2,
+            Index = 0,
+            Seq = ++_trailerSeq,
+            SentAt = Environment.TickCount64
+        }, PacketType.UpdatePosition);
+
+        _lastTrailerSent = position;
+        _lastTrailerSendTime = Time.unscaledTime;
     }
 
     private void SendPlayer()

@@ -12,6 +12,15 @@
 		ignoreSslValidation: boolean;
 		showNameplates: boolean;
 		remoteCollisions: boolean;
+		microphoneDevice: string;
+		microphoneDevices: string[];
+		microphoneGain: number;
+		noiseSuppression: boolean;
+		radioVolume: number;
+		radioEffect: number;
+		muteRadioDuringDialogue: boolean;
+		hearNearbyRadios: boolean;
+		checkForUpdates: boolean;
 	}
 
 	interface Status {
@@ -21,6 +30,7 @@
 		name: string;
 		hosting: boolean;
 		serverAvailable: boolean;
+		updateAvailable?: string | null;
 	}
 
 	interface ChatLine {
@@ -108,6 +118,15 @@
 		settings = { ...settings, [key]: value };
 		sendToGame('settingsSave', { [key]: value });
 	}
+
+	/** Any single setting — a number from a slider, a string from a select — saved the moment it changes. */
+	function set(key: keyof Settings, value: string | number) {
+		if (!settings) return;
+		settings = { ...settings, [key]: value };
+		sendToGame('settingsSave', { [key]: value });
+	}
+
+	const percent = (v: number) => `${Math.round(v * 100)}%`;
 
 	function prettySector(sector: string): string {
 		if (!sector || sector === 'none') return '—';
@@ -222,9 +241,71 @@
 							/>
 							<span>{tr('overlay.set.ssl')}<small>{tr('overlay.set.ssl.hint')}</small></span>
 						</label>
+
+						<label class="check">
+							<input
+								type="checkbox"
+								checked={settings.checkForUpdates}
+								onchange={(e) => toggle('checkForUpdates', e.currentTarget.checked)}
+							/>
+							<span>{tr('overlay.set.updates')}</span>
+						</label>
+
+						<label>
+							<span>{tr('overlay.set.mic')}</span>
+							<select value={settings.microphoneDevice} onchange={(e) => set('microphoneDevice', e.currentTarget.value)}>
+								<option value="">{tr('overlay.set.auto')}</option>
+								{#each settings.microphoneDevices ?? [] as device (device)}
+									<option value={device}>{device}</option>
+								{/each}
+							</select>
+						</label>
+
+						<label>
+							<span>{tr('overlay.set.micgain')} · {percent(settings.microphoneGain)}</span>
+							<input type="range" min="0.5" max="3" step="0.25" value={settings.microphoneGain}
+								onchange={(e) => set('microphoneGain', Number(e.currentTarget.value))} />
+						</label>
+
+						<label>
+							<span>{tr('overlay.set.radiovolume')} · {percent(settings.radioVolume)}</span>
+							<input type="range" min="0.25" max="2" step="0.25" value={settings.radioVolume}
+								onchange={(e) => set('radioVolume', Number(e.currentTarget.value))} />
+						</label>
+
+						<label>
+							<span>{tr('overlay.set.effect')}</span>
+							<select value={String(settings.radioEffect)} onchange={(e) => set('radioEffect', Number(e.currentTarget.value))}>
+								<option value="0">{tr('overlay.effect.off')}</option>
+								<option value="1">{tr('overlay.effect.light')}</option>
+								<option value="2">{tr('overlay.effect.full')}</option>
+							</select>
+						</label>
+
+						<label class="check">
+							<input type="checkbox" checked={settings.noiseSuppression}
+								onchange={(e) => toggle('noiseSuppression', e.currentTarget.checked)} />
+							<span>{tr('overlay.set.denoise')}</span>
+						</label>
+
+						<label class="check">
+							<input type="checkbox" checked={settings.muteRadioDuringDialogue}
+								onchange={(e) => toggle('muteRadioDuringDialogue', e.currentTarget.checked)} />
+							<span>{tr('overlay.set.mutedialogue')}</span>
+						</label>
+
+						<label class="check">
+							<input type="checkbox" checked={settings.hearNearbyRadios}
+								onchange={(e) => toggle('hearNearbyRadios', e.currentTarget.checked)} />
+							<span>{tr('overlay.set.trucks')}</span>
+						</label>
 					</div>
 				{/if}
 			</div>
+
+			{#if status?.updateAvailable}
+				<div class="notice">{tr('overlay.update', status.updateAvailable)}</div>
+			{/if}
 
 			{#if notice}
 				<div class="notice">{notice}</div>
@@ -347,6 +428,17 @@
 		outline: none;
 		border-color: var(--st-amber);
 	}
+
+	select {
+		background: var(--st-panel-solid);
+		border: 1px solid var(--st-line-soft);
+		color: var(--st-text);
+		padding: 7px 10px;
+		font-size: 13px;
+		font-family: inherit;
+	}
+
+	input[type='range'] { accent-color: var(--st-amber); width: 100%; }
 
 	button.primary, button.danger {
 		border: 1px solid var(--st-amber);

@@ -52,6 +52,16 @@ internal static class MultiplayerState
     }
 
     // ---------------------------------------------------------------------------------------
+    // How the link is doing
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>Movement packets missing over the last window, as a percentage of those expected.</summary>
+    public static int PacketLossPercent;
+
+    /// <summary>How far behind live the remote trucks are being drawn right now, in milliseconds.</summary>
+    public static int InterpolationMs;
+
+    // ---------------------------------------------------------------------------------------
     // Who is which colour
     // ---------------------------------------------------------------------------------------
 

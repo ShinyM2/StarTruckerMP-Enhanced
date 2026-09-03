@@ -435,7 +435,23 @@ internal static class MonitorPanel
         if (!force && Time.unscaledTime < _nextRefresh) return;
         _nextRefresh = Time.unscaledTime + 0.2f;
 
-        if (_header != null) _header.text = Strings.Get("monitor.title");
+        if (_header != null)
+        {
+            // The link's health in the corner: ping, how many movement packets went missing, and
+            // how far behind live the other trucks are drawn. When something jerks, this says why.
+            var header = Strings.Get("monitor.title");
+            if (Network.NetId != -1)
+            {
+                header += "   <size=62%><alpha=#A0>" +
+                          Strings.Get("monitor.stats",
+                              MultiplayerState.OwnPing >= 0 ? MultiplayerState.OwnPing.ToString() : "—",
+                              MultiplayerState.PacketLossPercent,
+                              MultiplayerState.InterpolationMs) +
+                          "<alpha=#FF></size>";
+            }
+
+            if (_header.text != header) _header.text = header;
+        }
         if (_roster != null) _roster.text = BuildRoster();
         if (_chat != null) _chat.text = BuildChat();
 

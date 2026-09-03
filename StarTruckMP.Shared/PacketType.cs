@@ -18,6 +18,9 @@
         Chat,
 
         /// <summary>The server's table of everyone's latency, broadcast on a slow timer.</summary>
-        Pings
+        Pings,
+
+        /// <summary>Switchable things on a truck other players can see: headlights, for now.</summary>
+        TruckState
     }
 }

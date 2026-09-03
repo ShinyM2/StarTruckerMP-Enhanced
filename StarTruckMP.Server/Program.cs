@@ -36,6 +36,7 @@ internal class Program
                 opt.ColorBehavior = LoggerColorBehavior.Enabled;
                 opt.TimestampFormat = "[yyyy-MM-dd HH:mm:ss] ";
             })
+            .AddProvider(MemoryLogSink.Instance) // the last few hundred lines, for the admin page
             .AddFilter("Microsoft.AspNetCore", LogLevel.Warning) // filter out noisy Kestrel logs
 #if DEBUG
             .SetMinimumLevel(LogLevel.Information)
@@ -161,6 +162,11 @@ internal class Program
         var settings = app.Services.GetRequiredService<ServerSettings>();
         var bindAddress = IPAddress.TryParse(settings.IpAddress, out var bindIp) ? bindIp : IPAddress.Any;
         startupLogger.LogInformation("Kestrel HTTP server starting on https://{Address}:{Port}", bindAddress, settings.Port);
+
+        if (settings.ApiAdminPassword == "changeme")
+            startupLogger.LogWarning("The admin page at https://<this machine>:{Port}/admin stays disabled until ApiAdminPassword in server.json is changed.", settings.Port);
+        else
+            startupLogger.LogInformation("Admin page: https://<this machine>:{Port}/admin (user '{User}')", settings.Port, settings.ApiAdminUsername);
 
         app.Run();
     }
