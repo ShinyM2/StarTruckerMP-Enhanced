@@ -1,0 +1,182 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net6.0</TargetFramework>
+        <AssemblyName>StarTruckMP.Client</AssemblyName>
+        <Product>StarTruckMP</Product>
+        <Version>1.1.0</Version>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <LangVersion>latest</LangVersion>
+        <RestoreAdditionalProjectSources>
+            https://api.nuget.org/v3/index.json;
+            https://nuget.bepinex.dev/v3/index.json;
+            https://nuget.samboy.dev/v3/index.json
+        </RestoreAdditionalProjectSources>
+        <RootNamespace>StarTruckMP.Client</RootNamespace>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Configuration)'=='Release'">
+        <DebugSymbols>False</DebugSymbols>
+        <DebugType>None</DebugType>
+        <PlatformTarget>x64</PlatformTarget>
+    </PropertyGroup>
+
+    <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+      <PlatformTarget>x64</PlatformTarget>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="BepInEx.Unity.IL2CPP" Version="6.0.0-be.*" IncludeAssets="compile" />
+        <PackageReference Include="BepInEx.PluginInfoProps" Version="2.*" />
+        <PackageReference Include="Concentus" Version="2.2.2" />
+        <PackageReference Include="Concentus.Native" Version="1.5.2" />
+        <PackageReference Include="Concentus.Native.NetCore" Version="1.5.2" />
+        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.7" />
+        <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="4.9.2" />
+        <PackageReference Include="NWaves" Version="0.9.6" />
+        <PackageReference Include="YellowDogMan.RRNoise.NET" Version="0.1.9" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- $(StarTruckBepInExSteam) = (STEAM VERSION) your BepInEx folder inside the games folder -->
+        <Reference Include="com.rlabrecque.steamworks.net">
+            <HintPath>$(StarTruckBepInExSteam)\interop\com.rlabrecque.steamworks.net.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <!-- $(StarTruckBepInEx) = your BepInEx folder inside the games folder -->
+        <Reference Include="UnityEngine.AudioModule">
+            <HintPath>$(StarTruckBepInEx)\interop\UnityEngine.AudioModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="Unity.Addressables">
+            <HintPath>$(StarTruckBepInEx)\interop\Unity.Addressables.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.AssetBundleModule">
+            <HintPath>$(StarTruckBepInEx)\interop\UnityEngine.AssetBundleModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.UIElementsModule">
+            <HintPath>$(StarTruckBepInEx)\interop\UnityEngine.UIElementsModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.UIElementsNativeModule">
+            <HintPath>$(StarTruckBepInEx)\interop\UnityEngine.UIElementsNativeModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.UIModule">
+            <HintPath>$(StarTruckBepInEx)\interop\UnityEngine.UIModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="XGamingRuntime">
+            <HintPath>$(StarTruckBepInEx)\interop\XGamingRuntime.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="0Harmony">
+            <HintPath>$(StarTruckBepInEx)\core\0Harmony.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="Assembly-CSharp">
+            <HintPath>$(StarTruckBepInEx)\interop\Assembly-CSharp.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="BepInEx.Core">
+            <HintPath>$(StarTruckBepInEx)\core\BepInEx.Core.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="BepInEx.Preloader.Core">
+            <HintPath>$(StarTruckBepInEx)\core\BepInEx.Preloader.Core.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="BepInEx.Unity.Common">
+            <HintPath>$(StarTruckBepInEx)\core\BepInEx.Unity.Common.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="BepInEx.Unity.IL2CPP">
+            <HintPath>$(StarTruckBepInEx)\core\BepInEx.Unity.IL2CPP.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="Il2CppInterop.Runtime">
+            <HintPath>$(StarTruckBepInEx)\core\Il2CppInterop.Runtime.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="Il2Cppmscorlib">
+            <HintPath>$(StarTruckBepInEx)\interop\Il2Cppmscorlib.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="Unity.TextMeshPro">
+            <HintPath>$(StarTruckBepInEx)\interop\Unity.TextMeshPro.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine">
+            <HintPath>$(StarTruckBepInEx)\interop\UnityEngine.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.CoreModule">
+            <HintPath>$(StarTruckBepInEx)\interop\UnityEngine.CoreModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <!-- GUIUtility.systemCopyBuffer lives here; it is the only clipboard Unity offers. -->
+        <Reference Include="UnityEngine.IMGUIModule">
+            <HintPath>$(StarTruckBepInEx)\interop\UnityEngine.IMGUIModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.InputLegacyModule">
+            <HintPath>$(StarTruckBepInEx)\interop\UnityEngine.InputLegacyModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.InputModule">
+            <HintPath>$(StarTruckBepInEx)\interop\UnityEngine.InputModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.Physics2DModule">
+            <HintPath>$(StarTruckBepInEx)\interop\UnityEngine.Physics2DModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.PhysicsModule">
+            <HintPath>$(StarTruckBepInEx)\interop\UnityEngine.PhysicsModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.TextRenderingModule">
+            <HintPath>$(StarTruckBepInEx)\interop\UnityEngine.TextRenderingModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.UI">
+            <HintPath>$(StarTruckBepInEx)\interop\UnityEngine.UI.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\StarTruckMP.Shared\StarTruckMP.Shared.csproj" />
+    </ItemGroup>
+
+    <PropertyGroup>
+        <OverlayHostOutputDir>..\StarTruckMP.Overlay.Host\bin\$(Configuration)\net10.0-windows10.0.19041.0\win-x64</OverlayHostOutputDir>
+    </PropertyGroup>
+
+    <Target Name="_RemovePublishDirBeforePublishing" BeforeTargets="BeforePublish">
+        <RemoveDir Directories="$(PublishDir)" Condition="'$(PublishDir)' != ''" />
+    </Target>
+
+    <Target Name="BuildAndStageOverlayHost" AfterTargets="Build">
+
+        <ItemGroup>
+            <OverlayHostFiles Include="$(OverlayHostOutputDir)\**\*.*" />
+        </ItemGroup>
+
+        <MakeDir Directories="$(TargetDir)overlay" />
+        <Copy SourceFiles="@(OverlayHostFiles)" DestinationFiles="@(OverlayHostFiles->'$(TargetDir)overlay\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    </Target>
+
+    <Target Name="IncludeOverlayHostInPublish" BeforeTargets="ComputeFilesToPublish">
+        <ItemGroup>
+            <OverlayPublishFiles Include="$(OverlayHostOutputDir)\**\*.*" />
+            <ResolvedFileToPublish Include="@(OverlayPublishFiles)">
+                <TargetPath>overlay\%(RecursiveDir)%(Filename)%(Extension)</TargetPath>
+                <RelativePath>overlay\%(RecursiveDir)%(Filename)%(Extension)</RelativePath>
+                <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            </ResolvedFileToPublish>
+        </ItemGroup>
+    </Target>
+</Project>

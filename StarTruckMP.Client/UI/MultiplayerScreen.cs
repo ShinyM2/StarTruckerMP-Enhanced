@@ -1,0 +1,688 @@
+﻿using System;
+using System.Collections.Generic;
+using Il2CppInterop.Runtime;
+using StarTruckMP.Client.Synchronization;
+using TMPro;
+using UnityEngine;
+using UnityEngine.UI;
+using Object = UnityEngine.Object;
+
+namespace StarTruckMP.Client.UI;
+
+/// <summary>
+/// The multiplayer settings page, built from the main menu's own widgets.
+///
+/// Cloning the settings screen would have been the obvious route, but the settings UI lives in a
+/// scene that is not loaded while the player is in the main menu — at that point the game holds
+/// no <c>DisplayScreen</c>, no <c>OptionScreen</c> and not a single settings row, only its menu
+/// buttons. So the page is a title plate and a column of cloned <see cref="MenuButton"/>s in the
+/// menu's own container, laid out the way the game's settings hub is: pick a section first, then
+/// see only what belongs to it.
+/// </summary>
+internal static class MultiplayerScreen
+{
+    private enum Page { Root, Host, Player, Display }
+
+    /// <summary>Amber, for the changeable half of a row at rest.</summary>
+    private const string RestingValue = "#EFC806";
+
+    /// <summary>Near-black, for the same value once the row is highlighted amber.</summary>
+    private const string SelectedValue = "#2A1F04";
+
+    private static Transform _column;
+    private static MenuButton _rowTemplate;
+    private static GameObject _titleTemplate;
+
+    private static GameObject _title;
+    private static readonly Dictionary<Page, List<GameObject>> _pages = new();
+    private static readonly List<GameObject> _hidden = new();
+
+    private static TMP_InputField _addressField;
+    private static TMP_InputField _portField;
+
+    private static GameObject _statusRow;
+    private static GameObject _hostStateRow;
+    private static GameObject _hostToggleRow;
+    private static GameObject _shareRow;
+    private static GameObject _copyRow;
+    private static float _copiedUntil;
+    private static GameObject _nameplatesRow;
+    private static GameObject _collisionsRow;
+    private static GameObject _ghostRow;
+    private static GameObject _chatKeyRow;
+
+    /// <summary>Set while the chat-key row is waiting for the player to press its replacement.</summary>
+    private static bool _listening;
+
+    private static Page _page = Page.Root;
+    private static bool _open;
+
+    public static bool IsOpen => _open;
+
+    /// <summary>
+    /// Remembers the widgets to clone. Called while the menu is being built, well before the
+    /// player can open the page.
+    /// </summary>
+    public static void Prepare(Transform column, MenuButton rowTemplate)
+    {
+        _column = column;
+        _rowTemplate = rowTemplate;
+        _titleTemplate = FindTitlePlate(column);
+
+        // The menu is rebuilt whenever the player returns to it, so the old rows are gone.
+        _pages.Clear();
+        _hidden.Clear();
+        _title = null;
+        _open = false;
+    }
+
+    public static void Show()
+    {
+        try
+        {
+            if (_column == null || _rowTemplate == null)
+            {
+                App.Log.LogWarning("[MP screen] No menu column to build into.");
+                return;
+            }
+
+            if (_pages.Count == 0) Build();
+            if (_pages.Count == 0) return;
+
+            // Put the game's own entries aside rather than destroying them.
+            _hidden.Clear();
+            foreach (var child in _column)
+            {
+                var t = child.Cast<Transform>();
+                if (t == null || IsOurs(t.gameObject)) continue;
+                if (!t.gameObject.activeSelf) continue;
+
+                _hidden.Add(t.gameObject);
+                t.gameObject.SetActive(false);
+            }
+
+            if (_title != null) _title.SetActive(true);
+
+            NetworkAddresses.Refresh();
+            _open = true;
+            Open(Page.Root);
+        }
+        catch (Exception ex)
+        {
+            App.Log.LogError($"[MP screen] Show failed: {ex}");
+            _open = false;
+        }
+    }
+
+    public static void Hide()
+    {
+        foreach (var page in _pages.Values)
+        {
+            foreach (var row in page)
+            {
+                if (row != null) row.SetActive(false);
+            }
+        }
+
+        if (_title != null) _title.SetActive(false);
+
+        foreach (var go in _hidden)
+        {
+            if (go != null) go.SetActive(true);
+        }
+
+        _hidden.Clear();
+        _open = false;
+    }
+
+    /// <summary>Keeps the live rows — connection and hosting state — current while the page is up.</summary>
+    public static void Tick()
+    {
+        if (!_open) return;
+
+        if (_listening) Listen();
+        Refresh();
+    }
+
+    /// <summary>
+    /// The next key the player presses becomes the chat key.
+    ///
+    /// Escape backs out without changing anything, and the mouse buttons are skipped: the row is
+    /// reached with a click, and taking that same click as the answer would rebind the key to the
+    /// press that opened the row.
+    /// </summary>
+    private static void Listen()
+    {
+        if (!Input.anyKeyDown) return;
+
+        if (Input.GetKeyDown(KeyCode.Escape))
+        {
+            _listening = false;
+            return;
+        }
+
+        foreach (var key in Keys())
+        {
+            if (key >= KeyCode.Mouse0 && key <= KeyCode.Mouse6) continue;
+            if (!Input.GetKeyDown(key)) continue;
+
+            App.ChatKey.Value = key;
+            _listening = false;
+            App.Log.LogInfo($"[MP screen] Chat key set to {key}.");
+            return;
+        }
+    }
+
+    /// <summary>Every key the runtime knows, read once.</summary>
+    private static KeyCode[] Keys()
+    {
+        if (_keys != null) return _keys;
+
+        try
+        {
+            var values = Enum.GetValues(typeof(KeyCode));
+            var keys = new KeyCode[values.Length];
+            for (var i = 0; i < values.Length; i++) keys[i] = (KeyCode)values.GetValue(i);
+            _keys = keys;
+        }
+        catch (Exception ex)
+        {
+            App.Log.LogError($"[MP screen] Could not enumerate the keyboard: {ex.Message}");
+            _keys = new[] { KeyCode.Return, KeyCode.T, KeyCode.Y, KeyCode.BackQuote, KeyCode.Backslash };
+        }
+
+        return _keys;
+    }
+
+    private static KeyCode[] _keys;
+
+    /// <summary>Back out one level, or close the page when already at the top.</summary>
+    public static void Back()
+    {
+        if (_page == Page.Root) Hide();
+        else Open(Page.Root);
+    }
+
+    #region Pages
+
+    private static void Open(Page page)
+    {
+        _page = page;
+
+        foreach (var entry in _pages)
+        {
+            var visible = entry.Key == page;
+            foreach (var row in entry.Value)
+            {
+                if (row != null) row.SetActive(visible);
+            }
+        }
+
+        SetTitle(page switch
+        {
+            Page.Host => Text("ХОСТ", "HOST"),
+            Page.Player => Text("ИГРОК", "PLAYER"),
+            Page.Display => Text("ОТОБРАЖЕНИЕ", "DISPLAY"),
+            _ => Text("МУЛЬТИПЛЕЕР", "MULTIPLAYER")
+        });
+
+        Refresh();
+    }
+
+    private static bool IsOurs(GameObject go)
+    {
+        if (go == _title) return true;
+
+        foreach (var page in _pages.Values)
+        {
+            if (page.Contains(go)) return true;
+        }
+
+        return false;
+    }
+
+    #endregion
+
+    #region Building
+
+    private static void Build()
+    {
+        BuildTitle();
+
+        // Root: choose a role first, exactly as the settings hub asks for a section first.
+        ActionRow(Page.Root, Text("Хост — создать свой сервер", "Host — run a server"), () => Open(Page.Host));
+        ActionRow(Page.Root, Text("Игрок — подключиться", "Player — join a server"), () => Open(Page.Player));
+        ActionRow(Page.Root, Text("Отображение", "Display"), () => Open(Page.Display));
+        ActionRow(Page.Root, Text("Назад", "Back"), Hide);
+
+        // Player.
+        _addressField = TextRow(Page.Player, Text("Адрес сервера", "Server address"), App.ServerAddress.Value);
+        _portField = TextRow(Page.Player, Text("Порт", "Port"), App.ServerPort.Value);
+        ActionRow(Page.Player, Text("Подключиться", "Connect"), Connect);
+        _statusRow = InfoRow(Page.Player);
+        ActionRow(Page.Player, Text("Назад", "Back"), () => Open(Page.Root));
+
+        // Host.
+        _hostToggleRow = ActionRow(Page.Host, string.Empty, ToggleHost);
+        _hostStateRow = InfoRow(Page.Host);
+        _shareRow = InfoRow(Page.Host);
+        _copyRow = ActionRow(Page.Host, string.Empty, CopyShareText);
+        ActionRow(Page.Host, Text("Назад", "Back"), () => Open(Page.Root));
+
+        // Display.
+        _nameplatesRow = ActionRow(Page.Display, string.Empty, () =>
+        {
+            App.ShowNameplates.Value = !App.ShowNameplates.Value;
+            Refresh();
+        });
+
+        _collisionsRow = ActionRow(Page.Display, string.Empty, () =>
+        {
+            App.RemoteCollisions.Value = !App.RemoteCollisions.Value;
+            Refresh();
+        });
+
+        _ghostRow = ActionRow(Page.Display, string.Empty, () =>
+        {
+            App.GhostMode.Value = !App.GhostMode.Value;
+            Refresh();
+        });
+
+        _chatKeyRow = ActionRow(Page.Display, string.Empty, () =>
+        {
+            _listening = !_listening;
+            Refresh();
+        });
+
+        ActionRow(Page.Display, Text("Назад", "Back"), () => Open(Page.Root));
+
+        App.Log.LogInfo($"[MP screen] Built {_pages.Count} pages from the menu's own widgets.");
+    }
+
+    /// <summary>
+    /// The dark plate with amber text that heads every settings screen. The main menu already
+    /// carries one — its "STAR TRUCKER" caption — so the page borrows that rather than drawing
+    /// an approximation of it.
+    /// </summary>
+    private static GameObject FindTitlePlate(Transform column)
+    {
+        foreach (var child in column)
+        {
+            var t = child.Cast<Transform>();
+            if (t == null) continue;
+
+            // A caption, unlike an entry, has text but nothing to press.
+            if (t.GetComponent<MenuButton>() != null) continue;
+            if (t.GetComponentInChildren<TextMeshProUGUI>(true) == null) continue;
+
+            return t.gameObject;
+        }
+
+        return null;
+    }
+
+    private static void BuildTitle()
+    {
+        if (_titleTemplate == null)
+        {
+            App.Log.LogWarning("[MP screen] No caption plate found in the menu; the page goes without a title.");
+            return;
+        }
+
+        _title = Object.Instantiate(_titleTemplate, _column);
+        _title.name = "StarTruckMP_Title";
+        _title.transform.SetAsFirstSibling();
+        _title.SetActive(false);
+
+        foreach (var lookup in _title.GetComponentsInChildren<StringTableLookup>(true))
+            Object.DestroyImmediate(lookup);
+
+        // The menu's caption plate is sized for the words "STAR TRUCKER" and stays that width
+        // whatever it is given, so a short heading left a long empty bar. The game's own section
+        // plates hug their text, and a fitter is what makes them do it.
+        var fitter = _title.GetComponent<ContentSizeFitter>();
+        if (fitter == null) fitter = _title.AddComponent<ContentSizeFitter>();
+
+        fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+        fitter.verticalFit = ContentSizeFitter.FitMode.Unconstrained;
+    }
+
+    private static void SetTitle(string caption)
+    {
+        if (_title == null) return;
+
+        foreach (var text in _title.GetComponentsInChildren<TextMeshProUGUI>(true))
+        {
+            text.text = caption;
+
+            // A fitter reads the preferred size, and TMP only recalculates that on its own next
+            // frame — without this the plate stays at the previous heading's width for a moment.
+            text.ForceMeshUpdate();
+        }
+
+        var rect = _title.GetComponent<RectTransform>();
+        if (rect != null) LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
+    }
+
+    /// <summary>
+    /// A row is a clone of a real menu entry, so it behaves and animates like one.
+    /// </summary>
+    private static GameObject ActionRow(Page page, string label, Action action)
+    {
+        var row = Object.Instantiate(_rowTemplate.gameObject, _column);
+        row.SetActive(false);
+
+        if (!_pages.TryGetValue(page, out var rows))
+        {
+            rows = new List<GameObject>();
+            _pages[page] = rows;
+        }
+
+        row.name = $"StarTruckMP_{page}_{rows.Count}";
+        rows.Add(row);
+
+        // Every label carries a localisation binding that would put the original text back.
+        foreach (var lookup in row.GetComponentsInChildren<StringTableLookup>(true))
+            Object.DestroyImmediate(lookup);
+
+        SetRowText(row, label);
+
+        var button = row.GetComponent<MenuButton>();
+        if (button != null)
+        {
+            var click = button.m_OnClick;
+
+            // The clone inherits the original entry's baked-in action, which has to go.
+            for (var i = 0; i < click.GetPersistentEventCount(); i++)
+                click.SetPersistentListenerState(i, UnityEngine.Events.UnityEventCallState.Off);
+
+            click.RemoveAllListeners();
+            if (action != null) click.AddListener(new Action(action));
+
+            button.isInteractable = true;
+        }
+
+        return row;
+    }
+
+    /// <summary>
+    /// A read-only line. Marking the button non-interactable is not enough — it still lights up
+    /// under the cursor — so the button component goes entirely and the row stops taking clicks.
+    /// </summary>
+    private static GameObject InfoRow(Page page)
+    {
+        var row = ActionRow(page, string.Empty, null);
+
+        foreach (var button in row.GetComponents<MenuButton>())
+            Object.DestroyImmediate(button);
+
+        // Without this the row still swallows the pointer and shows a hover state.
+        foreach (var graphic in row.GetComponentsInChildren<Graphic>(true))
+            graphic.raycastTarget = false;
+
+        // The highlight plate would otherwise flash behind a line nobody can press.
+        foreach (var image in row.GetComponentsInChildren<Image>(true))
+            image.enabled = false;
+
+        foreach (var text in row.GetComponentsInChildren<TextMeshProUGUI>(true))
+        {
+            text.color = new Color(text.color.r, text.color.g, text.color.b, 0.6f);
+            text.fontSize *= 0.78f;
+        }
+
+        return row;
+    }
+
+    /// <summary>
+    /// Writes a label into every state of a row.
+    ///
+    /// A menu entry holds two — <c>Option_Off_Label</c> for the resting state and
+    /// <c>Option_On_Label</c> for the highlighted one. Filling only the first left the original
+    /// text showing the moment the row was selected, which is why every row of this page used to
+    /// announce itself as "Options" under the cursor.
+    /// </summary>
+    private static void SetRowText(GameObject row, string label)
+    {
+        foreach (var text in row.GetComponentsInChildren<TextMeshProUGUI>(true))
+            text.text = label;
+    }
+
+    /// <summary>
+    /// A row whose value is coloured for the state it is drawn in: amber while resting, and near
+    /// black once the row itself turns amber under the cursor, where amber on amber vanished.
+    /// </summary>
+    private static void SetRowValue(GameObject row, string prefix, string value)
+    {
+        foreach (var text in row.GetComponentsInChildren<TextMeshProUGUI>(true))
+        {
+            var colour = text.name.Contains("_On_") ? SelectedValue : RestingValue;
+            text.text = $"{prefix}<color={colour}>{value}</color>";
+        }
+    }
+
+    /// <summary>
+    /// A row the player types into. The game's menus have no text field anywhere, so this one is
+    /// built by hand — but it is dressed in the cloned row's own font, size and colour, and sits
+    /// in the same slot, so it reads as part of the list.
+    /// </summary>
+    private static TMP_InputField TextRow(Page page, string label, string value)
+    {
+        var row = ActionRow(page, label, null);
+
+        var style = FirstLabel(row);
+        if (style == null) return null;
+
+        var holder = new GameObject("StarTruckMP_Input", new Il2CppSystem.Type[]
+        {
+            Il2CppType.Of<RectTransform>(),
+            Il2CppType.Of<Image>(),
+            Il2CppType.Of<TMP_InputField>()
+        });
+
+        holder.transform.SetParent(row.transform, false);
+
+        // Placed just past where the label actually ends, measured rather than guessed: a fixed
+        // fraction of the row put the box on top of the longer labels.
+        var labelWidth = style.GetPreferredValues(label).x;
+
+        var rect = holder.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(0f, 0f);
+        rect.anchorMax = new Vector2(1f, 1f);
+        rect.offsetMin = new Vector2(labelWidth + 40f, 3f);
+        rect.offsetMax = new Vector2(-8f, -3f);
+
+        holder.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.35f);
+
+        var viewport = new GameObject("Text Area", new Il2CppSystem.Type[]
+        {
+            Il2CppType.Of<RectTransform>(),
+            Il2CppType.Of<RectMask2D>()
+        });
+        viewport.transform.SetParent(holder.transform, false);
+        Stretch(viewport.GetComponent<RectTransform>(), 8f);
+
+        var textGo = new GameObject("Text", new Il2CppSystem.Type[]
+        {
+            Il2CppType.Of<RectTransform>(),
+            Il2CppType.Of<TextMeshProUGUI>()
+        });
+        textGo.transform.SetParent(viewport.transform, false);
+        Stretch(textGo.GetComponent<RectTransform>(), 0f);
+
+        var display = textGo.GetComponent<TextMeshProUGUI>();
+        display.font = style.font;
+        display.fontSize = style.fontSize * 0.85f;
+        display.color = new Color(0.93f, 0.91f, 0.87f, 1f);
+        display.alignment = TextAlignmentOptions.MidlineLeft;
+        display.enableAutoSizing = false;
+
+        var field = holder.GetComponent<TMP_InputField>();
+        field.textViewport = viewport.GetComponent<RectTransform>();
+        field.textComponent = display;
+        field.text = value;
+        field.lineType = TMP_InputField.LineType.SingleLine;
+        field.characterLimit = 64;
+
+        return field;
+    }
+
+    private static TextMeshProUGUI FirstLabel(GameObject row)
+    {
+        foreach (var text in row.GetComponentsInChildren<TextMeshProUGUI>(true))
+        {
+            if (text != null) return text;
+        }
+
+        return null;
+    }
+
+    private static void Stretch(RectTransform rect, float padding)
+    {
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = new Vector2(padding, padding);
+        rect.offsetMax = new Vector2(-padding, -padding);
+    }
+
+    #endregion
+
+    #region State
+
+    private static void Refresh()
+    {
+        HostControl.Poll();
+
+        if (_statusRow != null)
+        {
+            SetRowText(_statusRow, Network.NetId != -1
+                ? Text($"Состояние:  подключено, {PlayerState.Name}", $"Status:  connected, {PlayerState.Name}")
+                : Text("Состояние:  не подключено", "Status:  not connected"));
+        }
+
+        if (_hostToggleRow != null)
+        {
+            SetRowValue(_hostToggleRow, Text("Сервер:  ", "Server:  "), HostControl.IsHosting
+                ? Text("остановить", "stop")
+                : Text("запустить", "start"));
+        }
+
+        if (_hostStateRow != null)
+        {
+            // A failure explains itself here rather than leaving the row to quietly flip back.
+            SetRowText(_hostStateRow, HostControl.LastMessage
+                                      ?? (HostControl.IsHosting
+                                          ? Text("Сервер работает на этом компьютере", "Server is running on this machine")
+                                          : Text("Сервер не запущен", "Server is not running")));
+        }
+
+        if (_shareRow != null)
+        {
+            SetRowText(_shareRow, HostControl.IsHosting
+                ? Text($"Друзьям:  {NetworkAddresses.Share}  ·  порт {App.ServerPort.Value} (TCP и UDP)",
+                       $"Give friends:  {NetworkAddresses.Share}  ·  port {App.ServerPort.Value} (TCP and UDP)")
+                : Text("Запустите сервер, чтобы получить адрес для друзей",
+                       "Start the server to get an address to share"));
+        }
+
+        if (_copyRow != null)
+        {
+            SetRowText(_copyRow, Time.unscaledTime < _copiedUntil
+                ? Text("Скопировано в буфер обмена", "Copied to clipboard")
+                : Text("Скопировать данные для друзей", "Copy details for friends"));
+        }
+
+        if (_nameplatesRow != null)
+            SetRowValue(_nameplatesRow, Text("Ники над грузовиками:  ", "Nameplates:  "), OnOff(App.ShowNameplates.Value));
+
+        if (_collisionsRow != null)
+            SetRowValue(_collisionsRow, Text("Столкновения с игроками:  ", "Collide with players:  "), OnOff(App.RemoteCollisions.Value));
+
+        if (_ghostRow != null)
+            SetRowValue(_ghostRow, Text("Прозрачные у ворот и боксов:  ", "Ghost at gates and bays:  "), OnOff(App.GhostMode.Value));
+
+        if (_chatKeyRow != null)
+            SetRowValue(_chatKeyRow, Text("Клавиша чата:  ", "Chat key:  "),
+                _listening
+                    ? Text("нажмите клавишу", "press a key")
+                    : MonitorPanel.KeyName(App.ChatKey.Value));
+    }
+
+    /// <summary>
+    /// Puts everything a friend needs on the clipboard in one go — address, port, and the fact
+    /// that both protocols matter — so the host can paste it into a chat instead of reading
+    /// numbers off the screen.
+    /// </summary>
+    private static void CopyShareText()
+    {
+        var address = NetworkAddresses.Public ?? NetworkAddresses.Local ?? "?";
+        var port = App.ServerPort.Value;
+
+        var text = Localisation.IsRussian
+            ? $"Сервер StarTruckMP\nАдрес: {address}\nПорт: {port} (TCP и UDP)"
+            : $"StarTruckMP server\nAddress: {address}\nPort: {port} (TCP and UDP)";
+
+        var local = NetworkAddresses.Local;
+        if (NetworkAddresses.Public != null && local != null)
+        {
+            text += Localisation.IsRussian
+                ? $"\nВ одной сети: {local}"
+                : $"\nSame network: {local}";
+        }
+
+        try
+        {
+            GUIUtility.systemCopyBuffer = text;
+            _copiedUntil = Time.unscaledTime + 3f;
+            App.Log.LogInfo("[MP screen] Share details copied to the clipboard.");
+        }
+        catch (Exception ex)
+        {
+            App.Log.LogWarning($"[MP screen] Clipboard copy failed: {ex.Message}");
+        }
+
+        Refresh();
+    }
+
+    private static string OnOff(bool value) =>
+        value ? Text("вкл.", "on") : Text("выкл.", "off");
+
+    private static void Connect()
+    {
+        if (_addressField != null && !string.IsNullOrWhiteSpace(_addressField.text))
+            App.ServerAddress.Value = _addressField.text.Trim();
+
+        if (_portField != null && !string.IsNullOrWhiteSpace(_portField.text))
+            App.ServerPort.Value = _portField.text.Trim();
+
+        App.Log.LogInfo($"[MP screen] Connecting to {App.ServerAddress.Value}:{App.ServerPort.Value}");
+        Network.Reconnect();
+        Refresh();
+    }
+
+    private static void ToggleHost()
+    {
+        if (HostControl.IsHosting)
+        {
+            HostControl.Stop();
+        }
+        else
+        {
+            HostControl.Start();
+            NetworkAddresses.Refresh();
+
+            // A host plays on their own machine.
+            if (HostControl.IsHosting && App.ServerAddress.Value != "127.0.0.1")
+            {
+                App.ServerAddress.Value = "127.0.0.1";
+                if (_addressField != null) _addressField.text = "127.0.0.1";
+                Network.Reconnect();
+            }
+        }
+
+        Refresh();
+    }
+
+    #endregion
+
+    private static string Text(string russian, string latin) => Localisation.IsRussian ? russian : latin;
+}
