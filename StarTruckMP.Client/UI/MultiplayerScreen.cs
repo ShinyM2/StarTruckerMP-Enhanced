@@ -543,6 +543,12 @@ internal static class MultiplayerScreen
         foreach (var button in row.GetComponents<MenuButton>())
             Object.DestroyImmediate(button);
 
+        // The entry's animator keeps driving the label's alpha after the button is gone, and
+        // with nothing to tell it the row is enabled it fades the text out entirely — which is
+        // how the status line came to show nothing at all. A read-only line needs no animation.
+        foreach (var animator in row.GetComponentsInChildren<Animator>(true))
+            Object.DestroyImmediate(animator);
+
         // Without this the row still swallows the pointer and shows a hover state.
         foreach (var graphic in row.GetComponentsInChildren<Graphic>(true))
             graphic.raycastTarget = false;
@@ -554,7 +560,12 @@ internal static class MultiplayerScreen
         foreach (var text in row.GetComponentsInChildren<TextMeshProUGUI>(true))
         {
             text.color = new Color(text.color.r, text.color.g, text.color.b, 0.6f);
+            text.alpha = 0.6f;
             text.fontSize *= 0.78f;
+
+            // The entry keeps a second label for its highlighted state, which the animator used
+            // to swap in. With the animator gone that one would sit on top of the first forever.
+            if (text.name.Contains("_On_")) text.gameObject.SetActive(false);
         }
 
         return row;

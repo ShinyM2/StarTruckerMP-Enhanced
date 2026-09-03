@@ -43,6 +43,10 @@
             <Private>False</Private>
         </Reference>
         <!-- $(StarTruckBepInEx) = your BepInEx folder inside the games folder -->
+        <Reference Include="UnityEngine.AnimationModule">
+            <HintPath>$(StarTruckBepInEx)\interop\UnityEngine.AnimationModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
         <Reference Include="UnityEngine.AudioModule">
             <HintPath>$(StarTruckBepInEx)\interop\UnityEngine.AudioModule.dll</HintPath>
             <Private>False</Private>
