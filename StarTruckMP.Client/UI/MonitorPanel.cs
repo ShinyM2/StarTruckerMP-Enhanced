@@ -53,6 +53,26 @@ internal static class MonitorPanel
     /// </summary>
     public static bool Owns(MonitorChannelSwitcher switcher) => _switcher != null && _switcher.Equals(switcher);
 
+    /// <summary>True for the overlay switcher of the monitor this page was built on.</summary>
+    public static bool Owns(MonitorOverlaySwitcher overlays) => _overlays != null && _overlays.Equals(overlays);
+
+    /// <summary>Whether the page is on the screen right now.</summary>
+    public static bool IsShowing => _panel != null && _panel.activeSelf;
+
+    /// <summary>
+    /// Takes the game's pages back down while ours is up. Called after every Update and again
+    /// straight after the game shows one of its own pages, because that is exactly when the
+    /// trailer readout used to land on top of ours: a hitch puts it up on its own account, with
+    /// no channel change for the channel patch to see.
+    /// </summary>
+    public static void Reassert()
+    {
+        if (!IsShowing) return;
+        HoldScreen();
+    }
+
+    public static void LateTick() => Reassert();
+
     /// <summary>
     /// Builds the page against a switcher, once. Safe to call repeatedly — the truck's monitors
     /// come and go with the cab, and only the first usable switcher is taken.

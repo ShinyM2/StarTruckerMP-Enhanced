@@ -107,6 +107,9 @@ public class NetworkEventsComponent : MonoBehaviour
         {
             App.Log.LogInfo($"({netId}) Created player truck object");
 
+            var controller = player.TruckObj.GetComponent<TruckControllerComponent>();
+            if (controller != null) controller.NetId = netId;
+
             ConfigureRemoteTruckPhysics(player.TruckObj);
 
             AttachNameplate(player.TruckObj, player.PlayerName, netId);
@@ -191,6 +194,9 @@ public class NetworkEventsComponent : MonoBehaviour
             App.Log.LogError($"Failed to recreate truck for player {netId}");
             return;
         }
+
+        var rebuiltController = player.TruckObj.GetComponent<TruckControllerComponent>();
+        if (rebuiltController != null) rebuiltController.NetId = netId;
 
         TruckAppearanceSync.Apply(player.TruckObj, state.Livery, state.Appearance);
         ConfigureRemoteTruckPhysics(player.TruckObj);

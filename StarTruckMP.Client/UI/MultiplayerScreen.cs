@@ -1,10 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Text;
 using Il2CppInterop.Runtime;
 using StarTruckMP.Client.Audio;
 using StarTruckMP.Client.Synchronization;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using Object = UnityEngine.Object;
 
@@ -48,8 +50,8 @@ internal static class MultiplayerScreen
     /// <summary>Rows whose label is fixed, so it can be redrawn when the language changes.</summary>
     private static readonly List<(GameObject Row, string Key)> _labelled = new();
 
-    private static TMP_InputField _addressField;
-    private static TMP_InputField _portField;
+    private static TextField _addressField;
+    private static TextField _portField;
 
     private static GameObject _statusRow;
     private static GameObject _hostStateRow;
@@ -92,6 +94,8 @@ internal static class MultiplayerScreen
         _pages.Clear();
         _hidden.Clear();
         _labelled.Clear();
+        _fields.Clear();
+        _typingIn = null;
         _title = null;
         _open = false;
     }
@@ -153,6 +157,7 @@ internal static class MultiplayerScreen
 
         _hidden.Clear();
         _open = false;
+        SetTyping(null);
         VoiceInputComponent.SetTesting(false);
     }
 
@@ -173,6 +178,7 @@ internal static class MultiplayerScreen
         if (!_open) return;
 
         if (_listening) Listen();
+        HandleFields();
 
         if (Time.unscaledTime < _nextRefresh) return;
         _nextRefresh = Time.unscaledTime + RefreshSeconds;
@@ -607,23 +613,41 @@ internal static class MultiplayerScreen
     /// built by hand — but it is dressed in the cloned row's own font, size and colour, and sits
     /// in the same slot, so it reads as part of the list.
     /// </summary>
-    private static TMP_InputField TextRow(Page page, string label, string value)
+    /// <summary>
+    /// A row the player types into.
+    ///
+    /// The game's menus have no text field anywhere, and Unity's own input field cannot be made
+    /// to work in one: the screen's controller hands the selection to a menu entry every frame,
+    /// and an input field only hears the keyboard while it is the selected object — so it took one
+    /// character and went deaf, and paste never landed. The box is therefore drawn by hand and
+    /// the keys are read by hand in <see cref="HandleFields"/>, which needs nobody's permission.
+    /// It is still dressed in the cloned row's font, size and colour, so it reads as part of the list.
+    /// </summary>
+    private static TextField TextRow(Page page, string label, string value)
     {
         var row = ActionRow(page, label, null);
 
-        // The entry's own button must go: once it is enabled it claims the selection every frame
-        // the cursor is over it, and the input field — which only receives keys while selected —
-        // lost focus after the first character. Its animator goes with it, so the label stays
-        // put rather than fading; the field's own box is what the player clicks.
+        // The entry's button and animator go: the row must neither take the selection nor
+        // animate its label. The template may have been the highlighted entry when it was cloned
+        // — in the pause menu it always is — so its lit plate and "on" label come along too.
         foreach (var button in row.GetComponents<MenuButton>())
             Object.DestroyImmediate(button);
 
         foreach (var animator in row.GetComponentsInChildren<Animator>(true))
             Object.DestroyImmediate(animator);
 
+        foreach (var image in row.GetComponentsInChildren<Image>(true))
+            image.enabled = false;
+
         foreach (var text in row.GetComponentsInChildren<TextMeshProUGUI>(true))
         {
-            if (text.name.Contains("_On_")) text.gameObject.SetActive(false);
+            if (text.name.Contains("_On_"))
+            {
+                text.gameObject.SetActive(false);
+                continue;
+            }
+
+            text.alpha = 1f;
         }
 
         var style = FirstLabel(row);
@@ -632,8 +656,7 @@ internal static class MultiplayerScreen
         var holder = new GameObject("StarTruckMP_Input", new Il2CppSystem.Type[]
         {
             Il2CppType.Of<RectTransform>(),
-            Il2CppType.Of<Image>(),
-            Il2CppType.Of<TMP_InputField>()
+            Il2CppType.Of<Image>()
         });
 
         holder.transform.SetParent(row.transform, false);
@@ -648,23 +671,17 @@ internal static class MultiplayerScreen
         rect.offsetMin = new Vector2(labelWidth + 40f, 3f);
         rect.offsetMax = new Vector2(-8f, -3f);
 
-        holder.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.35f);
-
-        var viewport = new GameObject("Text Area", new Il2CppSystem.Type[]
-        {
-            Il2CppType.Of<RectTransform>(),
-            Il2CppType.Of<RectMask2D>()
-        });
-        viewport.transform.SetParent(holder.transform, false);
-        Stretch(viewport.GetComponent<RectTransform>(), 8f);
+        var frame = holder.GetComponent<Image>();
+        frame.color = FieldIdle;
+        frame.raycastTarget = false;
 
         var textGo = new GameObject("Text", new Il2CppSystem.Type[]
         {
             Il2CppType.Of<RectTransform>(),
             Il2CppType.Of<TextMeshProUGUI>()
         });
-        textGo.transform.SetParent(viewport.transform, false);
-        Stretch(textGo.GetComponent<RectTransform>(), 0f);
+        textGo.transform.SetParent(holder.transform, false);
+        Stretch(textGo.GetComponent<RectTransform>(), 8f);
 
         var display = textGo.GetComponent<TextMeshProUGUI>();
         display.font = style.font;
@@ -672,15 +689,164 @@ internal static class MultiplayerScreen
         display.color = new Color(0.93f, 0.91f, 0.87f, 1f);
         display.alignment = TextAlignmentOptions.MidlineLeft;
         display.enableAutoSizing = false;
+        display.enableWordWrapping = false;
+        display.overflowMode = TextOverflowModes.Truncate;
+        display.raycastTarget = false;
 
-        var field = holder.GetComponent<TMP_InputField>();
-        field.textViewport = viewport.GetComponent<RectTransform>();
-        field.textComponent = display;
-        field.text = value;
-        field.lineType = TMP_InputField.LineType.SingleLine;
-        field.characterLimit = 64;
-
+        var field = new TextField { Box = rect, Frame = frame, Display = display, Value = value ?? string.Empty };
+        _fields.Add(field);
+        field.Draw(false);
         return field;
+    }
+
+    /// <summary>A hand-drawn text box: its value, the frame that lights up while it has the keyboard, and the label that shows the value.</summary>
+    private sealed class TextField
+    {
+        public RectTransform Box;
+        public Image Frame;
+        public TextMeshProUGUI Display;
+        public string Value = string.Empty;
+
+        public string Text
+        {
+            get => Value;
+            set
+            {
+                Value = value ?? string.Empty;
+                Draw(_typingIn == this);
+            }
+        }
+
+        public void Draw(bool active)
+        {
+            if (Display == null || Frame == null) return;
+
+            var caret = active ? (Time.unscaledTime % 1f < 0.5f ? "_" : " ") : string.Empty;
+            var shown = Value + caret;
+            if (Display.text != shown) Display.text = shown;
+
+            Frame.color = active ? FieldActive : FieldIdle;
+        }
+    }
+
+    private static readonly Color FieldIdle = new(0f, 0f, 0f, 0.35f);
+    private static readonly Color FieldActive = new(0.94f, 0.78f, 0.02f, 0.18f);
+    private static readonly List<TextField> _fields = new();
+    private static TextField _typingIn;
+    private const int FieldLimit = 64;
+
+    /// <summary>True while a text box has the keyboard, so Escape closes the box rather than the page.</summary>
+    public static bool IsTyping => _typingIn != null;
+
+    /// <summary>
+    /// Runs every frame the page is up. A click lands the keyboard in the box under the cursor (or
+    /// takes it away); while a box has it, the typed characters go into the value, Backspace takes
+    /// one off, Ctrl+V pastes the clipboard, and Enter, Tab or Escape give the keyboard back.
+    /// </summary>
+    private static void HandleFields()
+    {
+        if (Input.GetMouseButtonDown(0))
+        {
+            TextField hit = null;
+            foreach (var field in _fields)
+            {
+                if (field.Box == null || !field.Box.gameObject.activeInHierarchy) continue;
+                if (!Under(field.Box, Input.mousePosition)) continue;
+
+                hit = field;
+                break;
+            }
+
+            SetTyping(hit);
+        }
+
+        var typing = _typingIn;
+        if (typing == null) return;
+
+        if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.Return) ||
+            Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Tab))
+        {
+            SetTyping(null);
+            return;
+        }
+
+        var control = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+
+        if (control)
+        {
+            if (Input.GetKeyDown(KeyCode.V)) Paste(typing);
+        }
+        else
+        {
+            foreach (var c in Input.inputString)
+            {
+                if (c == '\b')
+                {
+                    if (typing.Value.Length > 0) typing.Value = typing.Value.Substring(0, typing.Value.Length - 1);
+                    continue;
+                }
+
+                // Addresses and ports have no spaces; Enter and Tab arrive here as well as above.
+                if (char.IsControl(c) || char.IsWhiteSpace(c)) continue;
+                if (typing.Value.Length < FieldLimit) typing.Value += c;
+            }
+        }
+
+        typing.Draw(true);
+    }
+
+    private static void Paste(TextField field)
+    {
+        string clipboard;
+        try { clipboard = GUIUtility.systemCopyBuffer; }
+        catch (Exception ex)
+        {
+            App.Log.LogWarning($"[MP screen] Clipboard read failed: {ex.Message}");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(clipboard)) return;
+
+        var value = new StringBuilder(field.Value);
+        foreach (var c in clipboard.Trim())
+        {
+            if (char.IsControl(c) || char.IsWhiteSpace(c)) continue;
+            if (value.Length >= FieldLimit) break;
+            value.Append(c);
+        }
+
+        field.Value = value.ToString();
+    }
+
+    private static void SetTyping(TextField field)
+    {
+        if (_typingIn == field) return;
+
+        _typingIn?.Draw(false);
+        _typingIn = field;
+
+        if (field == null) return;
+
+        // Nothing else may hold the selection while the keyboard is read here, or the entry the
+        // cursor last touched would answer Enter and the arrows as well.
+        try { EventSystem.current?.SetSelectedGameObject(null); }
+        catch (Exception ex) { App.Log.LogWarning($"[MP screen] Could not clear the UI selection: {ex.Message}"); }
+
+        field.Draw(true);
+    }
+
+    /// <summary>Whether a screen point is over a rectangle of the menu canvas, whichever way that canvas is rendered.</summary>
+    private static bool Under(RectTransform rect, Vector3 screenPoint)
+    {
+        Camera camera = null;
+        var canvas = rect.GetComponentInParent<Canvas>();
+        if (canvas != null)
+        {
+            var root = canvas.rootCanvas;
+            if (root != null && root.renderMode != RenderMode.ScreenSpaceOverlay) camera = root.worldCamera;
+        }
+
+        return RectTransformUtility.RectangleContainsScreenPoint(rect, screenPoint, camera);
     }
 
     private static TextMeshProUGUI FirstLabel(GameObject row)
@@ -708,6 +874,17 @@ internal static class MultiplayerScreen
     private static void Refresh()
     {
         HostControl.Poll();
+
+        // The game's screen controller disables entries it does not know about whenever it
+        // reshuffles its own — a popup, a page change — and only its own get re-enabled. Ours are
+        // brought back a few times a second rather than once, so a row cannot stay faded.
+        if (_pages.TryGetValue(_page, out var visibleRows))
+        {
+            foreach (var row in visibleRows)
+            {
+                if (row != null) Revive(row.GetComponent<MenuButton>());
+            }
+        }
 
         // The game can switch language while the menu is up; the fixed labels follow it.
         if (_language != Strings.Language)
@@ -942,11 +1119,11 @@ internal static class MultiplayerScreen
 
     private static void Connect()
     {
-        if (_addressField != null && !string.IsNullOrWhiteSpace(_addressField.text))
-            App.ServerAddress.Value = _addressField.text.Trim();
+        if (_addressField != null && !string.IsNullOrWhiteSpace(_addressField.Text))
+            App.ServerAddress.Value = _addressField.Text.Trim();
 
-        if (_portField != null && !string.IsNullOrWhiteSpace(_portField.text))
-            App.ServerPort.Value = _portField.text.Trim();
+        if (_portField != null && !string.IsNullOrWhiteSpace(_portField.Text))
+            App.ServerPort.Value = _portField.Text.Trim();
 
         App.Log.LogInfo($"[MP screen] Connecting to {App.ServerAddress.Value}:{App.ServerPort.Value}");
         Network.Reconnect();
@@ -968,7 +1145,7 @@ internal static class MultiplayerScreen
             if (HostControl.IsHosting && App.ServerAddress.Value != "127.0.0.1")
             {
                 App.ServerAddress.Value = "127.0.0.1";
-                if (_addressField != null) _addressField.text = "127.0.0.1";
+                if (_addressField != null) _addressField.Text = "127.0.0.1";
                 Network.Reconnect();
             }
         }

@@ -66,8 +66,10 @@ public class MultiplayerUiComponent : MonoBehaviour
         // The native page shows live state, and Esc backs out of it like the game's own screens.
         if (MultiplayerScreen.IsOpen)
         {
+            // Escape closes a text box first; only with none open does it back out of the page.
+            var typing = MultiplayerScreen.IsTyping;
             MultiplayerScreen.Tick();
-            if (Input.GetKeyDown(KeyCode.Escape)) MultiplayerScreen.Back();
+            if (!typing && Input.GetKeyDown(KeyCode.Escape)) MultiplayerScreen.Back();
         }
 
         // Let the menu grey out its Connect button and show the real state without polling.
@@ -78,6 +80,13 @@ public class MultiplayerUiComponent : MonoBehaviour
             PushStatus();
         }
     }
+
+    /// <summary>
+    /// After every script's Update, including the game's: the monitor page reasserts itself here
+    /// so a page the game switched on this frame — the trailer readout, once a trailer is hitched —
+    /// is taken down again before anything is drawn.
+    /// </summary>
+    private void LateUpdate() => MonitorPanel.LateTick();
 
     #region Incoming: game -> overlay
 

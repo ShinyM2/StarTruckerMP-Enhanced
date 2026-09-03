@@ -55,6 +55,7 @@ public class Plugin : BasePlugin
         Harmony.CreateAndPatchAll(typeof(AIVehicleDef_Patch));
         Harmony.CreateAndPatchAll(typeof(MainMenuScreen_Patch));
         Harmony.CreateAndPatchAll(typeof(MonitorChannelSwitcher_Patch));
+        Harmony.CreateAndPatchAll(typeof(MonitorOverlaySwitcher_Patch));
         Harmony.CreateAndPatchAll(typeof(PauseScreen_Patch));
         
         Log.LogInfo($"Plugin {PluginInfo.PLUGIN_GUID} loaded.");
