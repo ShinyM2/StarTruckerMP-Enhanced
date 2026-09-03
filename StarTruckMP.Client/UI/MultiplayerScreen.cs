@@ -156,12 +156,26 @@ internal static class MultiplayerScreen
         VoiceInputComponent.SetTesting(false);
     }
 
-    /// <summary>Keeps the live rows — connection and hosting state — current while the page is up.</summary>
+    /// <summary>How often the live rows are redrawn on their own; a click redraws at once.</summary>
+    private const float RefreshSeconds = 0.25f;
+
+    private static float _nextRefresh;
+
+    /// <summary>
+    /// Keeps the live rows — connection and hosting state — current while the page is up.
+    ///
+    /// Not every frame: each redraw hands new text to some forty TextMeshPro labels, and doing
+    /// that at frame rate made the page stutter whenever a setting was changed. A quarter of a
+    /// second is quick enough for a level meter and a status line.
+    /// </summary>
     public static void Tick()
     {
         if (!_open) return;
 
         if (_listening) Listen();
+
+        if (Time.unscaledTime < _nextRefresh) return;
+        _nextRefresh = Time.unscaledTime + RefreshSeconds;
         Refresh();
     }
 
@@ -238,7 +252,10 @@ internal static class MultiplayerScreen
             var visible = entry.Key == page;
             foreach (var row in entry.Value)
             {
-                if (row != null) row.SetActive(visible);
+                if (row == null) continue;
+
+                row.SetActive(visible);
+                if (visible) Revive(row.GetComponent<MenuButton>());
             }
         }
 
@@ -484,10 +501,35 @@ internal static class MultiplayerScreen
             click.RemoveAllListeners();
             if (action != null) click.AddListener(new Action(action));
 
-            button.isInteractable = true;
+            Revive(button);
         }
 
         return row;
+    }
+
+    /// <summary>
+    /// Brings a cloned entry back to its normal look.
+    ///
+    /// A menu entry carries an animator with a "disabled" state that fades its resting label
+    /// out, and a flag that puts it into that state every time it is enabled. Our rows are
+    /// switched on and off as pages open, so left alone they came back invisible until the
+    /// cursor passed over them and the hover animation woke them up.
+    /// </summary>
+    private static void Revive(MenuButton button)
+    {
+        if (button == null) return;
+
+        try
+        {
+            button.disableOnEnable = false;
+            button.isInteractable = true;
+            button.SetEnabled(true);
+            button.ForceRefresh();
+        }
+        catch (Exception ex)
+        {
+            App.Log.LogWarning($"[MP screen] Could not reset a menu row's state: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -529,7 +571,10 @@ internal static class MultiplayerScreen
     private static void SetRowText(GameObject row, string label)
     {
         foreach (var text in row.GetComponentsInChildren<TextMeshProUGUI>(true))
-            text.text = label;
+        {
+            // Assigning the same string still rebuilds the mesh; skip it.
+            if (text.text != label) text.text = label;
+        }
     }
 
     /// <summary>
@@ -541,7 +586,8 @@ internal static class MultiplayerScreen
         foreach (var text in row.GetComponentsInChildren<TextMeshProUGUI>(true))
         {
             var colour = text.name.Contains("_On_") ? SelectedValue : RestingValue;
-            text.text = $"{prefix}<color={colour}>{value}</color>";
+            var label = $"{prefix}<color={colour}>{value}</color>";
+            if (text.text != label) text.text = label;
         }
     }
 
@@ -647,12 +693,7 @@ internal static class MultiplayerScreen
             }
         }
 
-        if (_statusRow != null)
-        {
-            SetRowText(_statusRow, Network.NetId != -1
-                ? Strings.Get("player.status.connected", PlayerState.Name)
-                : Strings.Get("player.status.disconnected"));
-        }
+        if (_statusRow != null) SetRowText(_statusRow, StatusLine());
 
         if (_hostToggleRow != null)
         {
@@ -700,6 +741,32 @@ internal static class MultiplayerScreen
                     : MonitorPanel.KeyName(App.ChatKey.Value));
 
         RefreshVoice();
+    }
+
+    /// <summary>
+    /// What the connection is doing, in words a player can act on.
+    ///
+    /// "Not connected" alone was the whole story before, and it read as "the button did nothing":
+    /// the mod authenticates from the main menu but only joins the game server once a save is
+    /// loaded, so the honest states are that the server cannot be reached, that it answered and
+    /// the join waits for a save, that the join is in progress, or that it is done.
+    /// </summary>
+    private static string StatusLine()
+    {
+        if (Network.NetId != -1)
+            return Strings.Get("player.status.connected", PlayerState.Name);
+
+        var where = $"{App.ServerAddress.Value}:{App.ServerPort.Value}";
+
+        if (!string.IsNullOrEmpty(Network.AuthProblem))
+            return Strings.Get("player.status.unreachable", where);
+
+        if (string.IsNullOrEmpty(PlayerState.Token))
+            return Strings.Get("player.status.signingin", where);
+
+        return Network.InWorld
+            ? Strings.Get("player.status.connecting", where)
+            : Strings.Get("player.status.waitsave");
     }
 
     private static void RefreshVoice()
@@ -781,12 +848,18 @@ internal static class MultiplayerScreen
     private static string Shorten(string text, int length) =>
         text.Length <= length ? text : text.Substring(0, length - 1) + "…";
 
-    /// <summary>Eight cells, filled to the level; the top cell needs a genuinely loud signal.</summary>
+    /// <summary>
+    /// Twelve cells, filled to the level; the top cell needs a genuinely loud signal.
+    ///
+    /// Plain bars rather than block glyphs: the menu font has no ▮ or ▯, and every character it
+    /// lacks costs a warning in the log on every redraw. The empty cells are the same bar at a
+    /// quarter of the alpha, which TMP does inline.
+    /// </summary>
     private static string LevelBar(float level)
     {
-        const int cells = 8;
+        const int cells = 12;
         var filled = Mathf.Clamp(Mathf.RoundToInt(Mathf.Sqrt(Mathf.Clamp01(level)) * cells), 0, cells);
-        return new string('▮', filled) + new string('▯', cells - filled);
+        return new string('|', filled) + "<alpha=#50>" + new string('|', cells - filled) + "<alpha=#FF>";
     }
 
     private static string Percent(float multiplier) => $"{Mathf.RoundToInt(multiplier * 100f)}%";

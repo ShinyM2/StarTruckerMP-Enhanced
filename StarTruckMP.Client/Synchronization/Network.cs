@@ -42,6 +42,16 @@ public class Network
     public static int NetId => _netId;
 
     /// <summary>
+    /// Why the server could not be reached at the last authentication attempt, or null once it
+    /// answered. Written by the auth thread, read by the menu so "Connect" never looks like it
+    /// did nothing.
+    /// </summary>
+    public static string AuthProblem;
+
+    /// <summary>True once a save is loaded and the connection loop is running; before that the mod only authenticates.</summary>
+    public static bool InWorld => _isInitialized;
+
+    /// <summary>
     /// This should only run once, on plugin startup.
     /// </summary>
     /// <returns></returns>

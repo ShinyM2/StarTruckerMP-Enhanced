@@ -7,6 +7,7 @@ using System.Threading;
 using BepInEx.Logging;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using StarTruckMP.Client.Http;
+using StarTruckMP.Client.Synchronization;
 using StarTruckMP.Shared.Cmd.Api;
 using StarTruckMP.Shared.Dto.Api;
 using StarTruckMP.Client.UI;
@@ -127,8 +128,13 @@ internal static class SteamAuthHelper
             if (response.StatusCode != HttpStatusCode.OK)
             {
                 Log.LogWarning("[Auth] Steam authentication failed, retrying in 5 seconds...");
+                Network.AuthProblem = $"HTTP {(int)response.StatusCode}";
                 return false;
             }
+
+            // The server is there and answered; whatever the menu was showing about it is over.
+            Network.AuthProblem = null;
+            _lastFailure = null;
 
             using var stream = response.Content.ReadAsStream();
             var body = JsonSerializer.Deserialize<TicketAuthenticationDto>(stream, App.JsonReaderOptions);
@@ -175,12 +181,34 @@ internal static class SteamAuthHelper
         }
         catch (Exception ex)
         {
-            Log.LogError($"[Auth] Steam HTTP request failed: ({url})");
-            Log.LogError(ex);
+            // A server that is not up yet is the normal case, not an error: the client keeps
+            // trying every few seconds for as long as the game runs. The full trace is worth
+            // having once; after that one line per new reason is enough, and a reason already
+            // reported is repeated only now and then so the log stays readable.
+            var reason = (ex.InnerException ?? ex).Message;
+            Network.AuthProblem = reason;
+            if (reason != _lastFailure)
+            {
+                _lastFailure = reason;
+                _sameFailures = 0;
+                Log.LogWarning($"[Auth] Cannot reach the server at {url}: {reason}. Retrying every 5 seconds until it answers.");
+                if (!_traceLogged)
+                {
+                    _traceLogged = true;
+                    Log.LogDebug(ex.ToString());
+                }
+            }
+            else if (++_sameFailures % 24 == 0)
+            {
+                Log.LogWarning($"[Auth] Still cannot reach the server at {url} ({reason}); still retrying.");
+            }
 
-            Log.LogWarning("[Auth] Steam authentication failed, retrying in 5 seconds...");
             return false;
         }
     }
+
+    private static string _lastFailure;
+    private static int _sameFailures;
+    private static bool _traceLogged;
 }
 
