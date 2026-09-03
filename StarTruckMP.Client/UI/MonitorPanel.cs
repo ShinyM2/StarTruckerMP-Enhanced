@@ -245,8 +245,9 @@ internal static class MonitorPanel
     /// The chat key opens the line, Enter sends it, Escape abandons it.
     ///
     /// The key is a setting rather than a constant, and the default is Enter: the first version
-    /// used Tab, which the game binds itself. Only read while the page is the channel on screen,
-    /// so outside that the key belongs entirely to the game.
+    /// used Tab, which the game binds itself. Only read while the page is the channel on screen
+    /// and the player is in the seat in front of it — anywhere else the key belongs entirely to
+    /// the game, and a line typed from the back of the cab would go to a screen nobody is facing.
     /// </summary>
     private static void HandleTyping()
     {
@@ -254,7 +255,14 @@ internal static class MonitorPanel
 
         if (!_typing)
         {
-            if (Input.GetKeyDown(key)) StartTyping();
+            if (InSeat() && Input.GetKeyDown(key)) StartTyping();
+            return;
+        }
+
+        // Getting up ends the line: the monitor is out of reach, and the keys are needed to walk.
+        if (!InSeat())
+        {
+            StopTyping();
             return;
         }
 
@@ -294,6 +302,36 @@ internal static class MonitorPanel
         // The line has to answer the keyboard now, not at the next half-second refresh.
         DrawInput();
     }
+
+    /// <summary>
+    /// Whether the player is in the driver's seat. The game keeps the answer in its own binding;
+    /// if that cannot be read the chat stays usable rather than silently locked.
+    /// </summary>
+    private static bool InSeat()
+    {
+        try
+        {
+            var location = PlayerLocation.instance;
+            if (location != null && location.playerInSeat != null) return location.playerInSeat.Get();
+
+            var truck = StarTruck.instance;
+            if (truck != null && truck.playerInSeatBinding != null) return truck.playerInSeatBinding.Get();
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (!_seatWarned)
+            {
+                _seatWarned = true;
+                App.Log.LogWarning($"[Monitor] Could not read whether the player is seated; the chat is not gated. {ex.Message}");
+            }
+
+            return true;
+        }
+    }
+
+    private static bool _seatWarned;
 
     private static void StartTyping()
     {
@@ -352,7 +390,7 @@ internal static class MonitorPanel
 
         if (Network.NetId == -1)
         {
-            Notice(T("НЕТ СВЯЗИ С СЕРВЕРОМ", "NO CONNECTION TO THE SERVER"));
+            Notice(Strings.Get("monitor.noconnection"));
             return;
         }
 
@@ -372,11 +410,12 @@ internal static class MonitorPanel
 
     private static void Refresh(bool force)
     {
-        // A monitor readout does not need to keep pace with the frame rate.
+        // A monitor readout does not need to keep pace with the frame rate, but the on-air marks
+        // beside the names should light up while the voice is still being heard.
         if (!force && Time.unscaledTime < _nextRefresh) return;
-        _nextRefresh = Time.unscaledTime + 0.5f;
+        _nextRefresh = Time.unscaledTime + 0.2f;
 
-        if (_header != null) _header.text = T("МУЛЬТИПЛЕЕР", "MULTIPLAYER");
+        if (_header != null) _header.text = Strings.Get("monitor.title");
         if (_roster != null) _roster.text = BuildRoster();
         if (_chat != null) _chat.text = BuildChat();
 
@@ -401,31 +440,37 @@ internal static class MonitorPanel
         }
 
         _notice = string.Empty;
-        _input.text = $"{KeyName(App.ChatKey.Value)} — " + T("НАПИСАТЬ", "TYPE");
+        _input.text = InSeat()
+            ? $"{KeyName(App.ChatKey.Value)} — " + Strings.Get("monitor.type")
+            : Strings.Get("monitor.sit");
     }
 
     private static string BuildRoster()
     {
-        if (Network.NetId == -1) return T("НЕТ СВЯЗИ С СЕРВЕРОМ", "NO CONNECTION TO THE SERVER");
+        if (Network.NetId == -1) return Strings.Get("monitor.noconnection");
 
         var lines = new StringBuilder();
-        lines.Append(T("На сервере: ", "Online: ")).Append(MultiplayerState.Players.Count + 1).Append('\n');
+        lines.Append(Strings.Get("monitor.online")).Append(MultiplayerState.Players.Count + 1).Append('\n');
         lines.Append("> ").Append(Own()).Append('\n');
 
         if (MultiplayerState.Players.Count == 0)
         {
-            lines.Append("  ").Append(T("больше никого", "nobody else"));
+            lines.Append("  ").Append(Strings.Get("monitor.nobody"));
             return lines.ToString();
         }
 
         foreach (var player in MultiplayerState.Players)
         {
             lines.Append("  ")
-                 .Append(player.Name)
-                 .Append("   ")
-                 .Append(player.SameSector ? T("рядом", "nearby") : PrettySector(player.Sector));
+                 .Append(player.Name);
 
-            if (player.Ping >= 0) lines.Append("   ").Append(player.Ping).Append(T(" мс", " ms"));
+            // Lit while their voice is coming out of the radio.
+            if (MultiplayerState.IsSpeaking(player.NetId)) lines.Append(OnAirMark);
+
+            lines.Append("   ")
+                 .Append(player.SameSector ? Strings.Get("monitor.nearby") : PrettySector(player.Sector));
+
+            if (player.Ping >= 0) lines.Append("   ").Append(player.Ping).Append(Strings.Get("monitor.ms"));
 
             lines.Append('\n');
         }
@@ -433,20 +478,25 @@ internal static class MonitorPanel
         return lines.ToString().TrimEnd();
     }
 
+    /// <summary>The on-air marker, beside a name while that player's voice is on the radio.</summary>
+    private const string OnAirMark = " ((•))";
+
     private static string Own()
     {
-        var name = string.IsNullOrWhiteSpace(PlayerState.Name) ? T("Вы", "You") : PlayerState.Name;
+        var name = string.IsNullOrWhiteSpace(PlayerState.Name) ? Strings.Get("monitor.you") : PlayerState.Name;
+        if (Audio.VoiceInputComponent.Transmitting) name += OnAirMark;
+
         var line = $"{name}   {PrettySector(PlayerState.Sector)}";
 
         if (MultiplayerState.OwnPing >= 0)
-            line += "   " + MultiplayerState.OwnPing + T(" мс", " ms");
+            line += "   " + MultiplayerState.OwnPing + Strings.Get("monitor.ms");
 
         return line;
     }
 
     private static string BuildChat()
     {
-        if (MultiplayerState.Chat.Count == 0) return T("Чат пуст", "No messages yet");
+        if (MultiplayerState.Chat.Count == 0) return Strings.Get("monitor.nochat");
 
         var lines = new StringBuilder();
         var from = Math.Max(0, MultiplayerState.Chat.Count - ChatLinesShown);
@@ -556,8 +606,6 @@ internal static class MonitorPanel
     /// <summary>The end of a line being typed, so the caret never runs off the screen.</summary>
     private static string Tail(string text, int length) =>
         text.Length <= length ? text : text.Substring(text.Length - length);
-
-    private static string T(string russian, string latin) => Localisation.IsRussian ? russian : latin;
 
     // ---------------------------------------------------------------------------------------
     // Building

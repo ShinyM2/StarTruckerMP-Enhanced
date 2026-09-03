@@ -107,8 +107,7 @@ public class MainMenuScreen_Patch
     /// while the screen is plainly full of Russian — and answering Latin also picks up the
     /// primary face, which is why the entry stood out in bold among its neighbours.
     /// </summary>
-    private static string LabelFor(GameObject template) =>
-        Localisation.IsRussian ? "Мультиплеер" : "Multiplayer";
+    private static string LabelFor(GameObject template) => Strings.Get("menu.multiplayer");
 
     /// <summary>Any visible text from the game, used only to tell which language is on screen.</summary>
     private static string SampleText(GameObject template)

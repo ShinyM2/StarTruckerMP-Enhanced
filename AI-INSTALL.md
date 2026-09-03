@@ -49,7 +49,7 @@ Without `gh`, use `Invoke-WebRequest` on the asset URL from the releases page. E
 
 If `$GameDir\BepInEx\plugins\StarTruckMP` already exists (an older version), delete that folder first.
 
-Copy the **contents** of the extracted folder `Скопировать в папку игры` into `$GameDir`, overwriting. Copy the contents, not the folder itself. Afterwards all of these must exist:
+Copy the **contents** of the extracted folder `Copy into the game folder` into `$GameDir`, overwriting. Copy the contents, not the folder itself. Afterwards all of these must exist:
 
 ```
 $GameDir\winhttp.dll
@@ -88,7 +88,7 @@ The mod only connects once the user loads a save. Sitting in the main menu is no
 Read `$GameDir\BepInEx\LogOutput.log`. A good install shows, in order:
 
 ```
-Loading [StarTruckMP 1.1.0]
+Loading [StarTruckMP 1.2.0]
 [Auth] Steam persona name: <nickname>
 [Auth] Steam token: <32 hex chars>
 Connected to server <address>:7777, waiting for handshake...

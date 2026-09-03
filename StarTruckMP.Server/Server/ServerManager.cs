@@ -18,7 +18,7 @@ public class ServerManager
 {
     private const byte ReliableChannel = 0;
     private const byte VoiceChannel = 0;
-    private const int MaxNameLength = 32;
+    private const int MaxNameLength = 32;
     private const int MaxChatLength = 300;
     private const int MaxIncomingPacketsPerTick = 256;
     private const int MaxOutgoingPacketsPerTick = 512;
@@ -428,6 +428,7 @@ public class ServerManager
             Name = player.Name,
             Sector = player.Sector,
             Livery = player.Livery,
+            Appearance = player.Appearance,
             Player = new TransformDto
             {
                 Position = player.PlayerPosition,
@@ -622,8 +623,9 @@ public class ServerManager
     {
         var liveryData = PacketSerializer.Deserialize<UpdateLiveryCmd>(raw);
         player.Livery = liveryData.Livery;
+        player.Appearance = liveryData.Appearance;
 
-        var update = new UpdateLiveryDto { NetId = peerId, Livery = player.Livery };
+        var update = new UpdateLiveryDto { NetId = peerId, Livery = player.Livery, Appearance = player.Appearance };
         QueueSendReliableToAllExcept(update.Serialize(PacketType.UpdateLivery), peerId);
 
         if (_logger.IsEnabled(LogLevel.Trace))

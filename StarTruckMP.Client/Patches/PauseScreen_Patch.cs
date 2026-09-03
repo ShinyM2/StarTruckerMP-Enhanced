@@ -56,7 +56,7 @@ public class PauseScreen_Patch
         foreach (var lookup in clone.GetComponentsInChildren<StringTableLookup>(true))
             Object.DestroyImmediate(lookup);
 
-        var label = Localisation.IsRussian ? "Мультиплеер" : "Multiplayer";
+        var label = Strings.Get("menu.multiplayer");
         foreach (var text in clone.GetComponentsInChildren<TextMeshProUGUI>(true))
             text.text = label;
 

@@ -18,7 +18,7 @@ Verified in game:
 | Hosting from inside the game | `HostControl` |
 | Steam ticket validation | `SteamTicketValidator`, with `SteamWebApiKey` set |
 
-Built and compiled, **not yet seen with two players**: the cab monitor page (`MonitorPanel`, on the docking-camera channel), ghost mode (`GhostComponent`, `GhostZones`), the ping column, the rebindable chat key, chat itself.
+Built and compiled, **not yet seen with two players**: the cab monitor page (`MonitorPanel`, on the docking-camera channel), ghost mode (`GhostComponent`, `GhostZones`), the ping column, the rebindable chat key, chat itself and its seat gating (`MonitorPanel.InSeat`), the radio page (`MultiplayerScreen`, `VoiceInputComponent`): microphone choice, the loopback test, gain, noise suppression, radio volume, the radio sound levels and squelch bursts (`RadioVoiceEffectProcessor`, `CbRadioSpeakerComponent`), the radio yielding to the game's NPC calls (`CbRadioPttComponent.IsDialogueBusy`), the on-air markers on nameplates and the monitor, the full truck appearance (`TruckAppearanceSync`, `AppearanceSyncComponent`), and the eleven-language `Strings` table.
 
 ## Game internals
 
@@ -72,6 +72,26 @@ The multiplayer page rides the docking-camera channel of the right-hand monitor.
 ### Nameplates need to ignore depth
 
 Set `_ZTestMode = 8` (Always) and render queue 4000 on the label's **instanced** material (`fontMaterial`). `fontSharedMaterial` restyles every other piece of text using that font.
+
+### The CB radio
+
+`CBRadioController` sits under the player's truck; `cbHeldBinding.Get()` is true while the handset is in hand and `ControlBindings.cbTalk.Held()` while the talk button is down — that pair is the push-to-talk, as in the original mod. The handset (`CBHandsetController.isTalking`) knows the same thing; it is logged on every PTT transition so the two can be compared.
+
+The game's own conversations run through the singleton `RadioChatState.instance`: `dialogueView.currentPanels` holds the NPC lines currently on screen and `availableResponseIds` the answers the player may pick (`cbResponse1..3`). Either being non-empty is what the mod treats as "the game owns the radio". Whether hollers (the player's own calls to NPCs) also show up in `availableResponseIds` is **unverified**; if they do, PTT is blocked whenever the handset is up near an NPC and the `[CB Radio] Game dialogue took the radio` line in the log will say so.
+
+The interop assembly can be read offline with `System.Reflection.MetadataLoadContext` over `BepInEx\interop` + `BepInEx\core` + the .NET runtime directory; PowerShell 5.1's `ReflectionOnlyLoadFrom` cannot resolve its `System.Runtime 6.0` reference.
+
+### What a truck's look is made of
+
+The owner's choices live in `CustomizationState.CurrentCustomizationState` under the player's truck: `equippedLivery`, `equippedMaterial` (the base material), `equippedColors` — an `Il2CppStructArray<int>` of the game's own packed colour ints in the order Base, Primary, Secondary, Tertiary, Chrome, Chassis — and the bolt-on parts (`equippedExhaust`, `equippedGrill`, `equippedOrnament`, `equippedSensors`, `equippedLicensePlate` + `licensePlateLabel`, `equippedWindowDecal`, `equippedMaglockTopper`). Wear is `DamageState.OverallDamagePercent` and `OverallDirtPercent`.
+
+A remote truck is an NPC cab. Its `AIVehicleCustomiser.m_cabLiveryApplier` is a `LiveryAndDamageApplierBase` that takes `LoadAndApplyLiveryById`, `SetBaseMaterialOverride`, `SetColorOverrides(Il2CppStructArray<int>)` and `SetOverallDamagePercent`; the `TruckExterior` subclass adds `SetOverallDirtPercent`. That covers the paint. The bolt-on parts go through a `CustomizationApplier` (`LoadAndApplyCustomization(CustomizationSlotKey.SingleIndexSlot(type), id, content)`), and **whether the NPC cab prefab carries one is unverified**: `TruckAppearanceSync` logs `[Appearance] The remote truck has no CustomizationApplier` once if it does not, and the parts are then simply not shown.
+
+Whether `SetColorOverrides` survives a later `AssignCabLivery` (the livery loads asynchronously) is also unverified; the overrides are set before the livery is assigned on that assumption.
+
+### The game's string tables
+
+`Star Trucker_Data\StreamingAssets\XML\Strings\<lang>.xml` are zip files holding `strings.xml` (`<string id="STR_BACK">Back</string>`). Languages: en, ru, de, fr, es, es-419, pt-br, pl, it (partial), zh-cn, zh-hant. `StringTable.language` returns the code; `StringTable.Get("STR_BACK")` etc. is what `Strings.Back/On/Off` use so those words match the game's menus.
 
 ### Reading a method's real signature
 

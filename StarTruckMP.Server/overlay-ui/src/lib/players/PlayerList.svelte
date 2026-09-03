@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { onGameMessage } from '$lib/gameEvents';
+	import { strings, translate } from '$lib/strings';
+
+	let tr = $derived.by(() => (key: string, ...args: unknown[]) => translate($strings, key, ...args));
 
 	interface RosterEntry {
 		netId: number;
@@ -32,7 +35,7 @@
 
 	/** "Sector_02_AtlasPrime" reads better as "Atlas Prime". */
 	function prettySector(sector: string): string {
-		if (!sector || sector === 'none') return 'unknown';
+		if (!sector || sector === 'none') return tr('overlay.players.unknown');
 
 		return sector
 			.replace(/^Sector[_-]?\d*[_-]?/i, '')
@@ -63,9 +66,9 @@
 	<aside class="panel">
 		<header>
 			<span class="count">{roster.total}</span>
-			<span class="label">on server</span>
+			<span class="label">{tr('overlay.players.onserver')}</span>
 			{#if roster.total > 1}
-				<span class="here">{here} in your sector</span>
+				<span class="here">{tr('overlay.players.insector', here)}</span>
 			{/if}
 		</header>
 

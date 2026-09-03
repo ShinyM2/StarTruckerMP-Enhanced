@@ -14,7 +14,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$GameDir,
     [string]$BepInExZip = "",
-    [string]$Version = "1.1.0",
+    [string]$Version = "1.2.0",
     [string]$NodeDir = "",
     [switch]$SkipPackage
 )
@@ -66,6 +66,9 @@ $client = Join-Path $out "client"
 Run dotnet @("publish", (Join-Path $root "StarTruckMP.Client\StarTruckMP.Client.csproj"), "-c", "Release", "-r", "win-x64", "-p:EnableWindowsTargeting=true", "-o", $client)
 if (-not (Test-Path (Join-Path $client "overlay\StarTruckMP.Overlay.exe"))) { throw "Overlay was not staged into the client output." }
 
+# Publish leaves the satellite-resource folders of packages that are no longer referenced behind, empty.
+Get-ChildItem $client -Directory | Where-Object { -not (Get-ChildItem $_.FullName -Recurse -File) } | Remove-Item -Recurse -Force
+
 # 3. Overlay UI, then the server.
 Write-Host "== Building overlay UI" -ForegroundColor Cyan
 Remove-Item (Join-Path $root "StarTruckMP.Server\wwwroot\overlay") -Recurse -Force -ErrorAction SilentlyContinue
@@ -98,7 +101,7 @@ if (-not $BepInExZip) {
 
 $pkg = Join-Path $out "package"
 Remove-Item $pkg -Recurse -Force -ErrorAction SilentlyContinue
-$game = Join-Path $pkg "Скопировать в папку игры"
+$game = Join-Path $pkg "Copy into the game folder"
 New-Item -ItemType Directory -Force $game | Out-Null
 Expand-Archive -Path $BepInExZip -DestinationPath $game -Force
 Remove-Item (Join-Path $game "changelog.txt") -ErrorAction SilentlyContinue
@@ -106,6 +109,7 @@ Remove-Item (Join-Path $game "changelog.txt") -ErrorAction SilentlyContinue
 Copy-Item $client (Join-Path $game "BepInEx\plugins\StarTruckMP") -Recurse
 New-Item -ItemType Directory -Force (Join-Path $game "BepInEx\config") | Out-Null
 Copy-Item (Join-Path $root "tools\package\StarTruckMP.Client.cfg") (Join-Path $game "BepInEx\config\StarTruckMP.Client.cfg")
+Copy-Item (Join-Path $root "tools\package\README.txt") $pkg
 Copy-Item (Join-Path $root "tools\package\ЧИТАЙ МЕНЯ.txt") $pkg
 Copy-Item (Join-Path $root "AI-INSTALL.md") $pkg
 

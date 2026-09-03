@@ -9,7 +9,7 @@ Instructions for AI coding agents and developers working in this repository.
 | The mod installed so they can play | [AI-INSTALL.md](AI-INSTALL.md). Do not build from source for a player; releases are prebuilt. |
 | To build, change or debug the code | This file. Game internals learned the hard way are in [docs/DEV-NOTES.md](docs/DEV-NOTES.md). |
 
-Users are usually Russian-speaking; answer in the language they write in.
+Users are usually Russian-speaking; answer in the language they write in. Documentation is English first with a Russian twin beside it (`README.md` / `README.ru.md`, `HOW-IT-WORKS.md` / `HOW-IT-WORKS.ru.md`, `tools/package/README.txt` / `ЧИТАЙ МЕНЯ.txt`); change both when you change one.
 
 ---
 
@@ -71,6 +71,8 @@ To test, delete `<game>\BepInEx\plugins\StarTruckMP` and copy `artifacts\client`
 - The client runs under IL2CPP. New `MonoBehaviour`s need an `(IntPtr ptr) : base(ptr)` constructor and `ClassInjector.RegisterTypeInIl2Cpp<T>()` in `Plugin.cs`.
 - Anything touching Unity objects runs on the game thread: post it through `_mainThreadContext.Post(...)` as the existing handlers do. Network callbacks arrive on other threads.
 - Steamworks types are touched only inside `Authentication/SteamAuthHelper`, behind an assembly-presence check.
+- Every string a player sees goes through `UI/Strings.cs`, which holds it in all eleven languages the game ships (en, ru, de, fr, es, pt-br, pl, it, zh-cn, zh-hant; es-419 reads es). Add a key with every column filled rather than an inline literal; the overlay receives the `overlay.*` keys from the same table.
+- Nothing developer-only ships: no in-game code runner, object inspector or test pages. Dev tooling belongs under `#if DEBUG` or outside the repo.
 - Source files use CRLF and a UTF-8 BOM. Keep both.
 - Log rather than guess: every assumption about the game's object hierarchy that was not checked against `BepInEx\LogOutput.log` turned out wrong. `docs/DEV-NOTES.md` has the traces to look for.
 

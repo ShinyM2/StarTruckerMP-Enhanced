@@ -1,6 +1,10 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { onGameMessage, sendToGame } from '$lib/gameEvents';
+	import { strings, translate } from '$lib/strings';
+
+	// The player's words, redrawn whenever the game sends a new set.
+	let tr = $derived.by(() => (key: string, ...args: unknown[]) => translate($strings, key, ...args));
 
 	interface Settings {
 		serverAddress: string;
@@ -119,84 +123,76 @@
 	<div class="scrim">
 		<section class="menu">
 			<header>
-				<h1>Мультиплеер</h1>
+				<h1>{tr('overlay.title')}</h1>
 				<span class="state" class:on={status?.connected}>
-					{status?.connected ? 'подключено' : 'не подключено'}
+					{status?.connected ? tr('overlay.connected') : tr('overlay.disconnected')}
 				</span>
-				<button class="close" onclick={() => sendToGame('menuClose', {})} aria-label="Закрыть">✕</button>
+				<button class="close" onclick={() => sendToGame('menuClose', {})} aria-label={tr('overlay.close')}>✕</button>
 			</header>
 
 			<nav>
-				<button class:active={tab === 'connect'} onclick={() => (tab = 'connect')}>Подключение</button>
-				<button class:active={tab === 'host'} onclick={() => (tab = 'host')}>Свой сервер</button>
-				<button class:active={tab === 'chat'} onclick={() => (tab = 'chat')}>Чат</button>
-				<button class:active={tab === 'settings'} onclick={() => (tab = 'settings')}>Настройки</button>
+				<button class:active={tab === 'connect'} onclick={() => (tab = 'connect')}>{tr('overlay.tab.connect')}</button>
+				<button class:active={tab === 'host'} onclick={() => (tab = 'host')}>{tr('overlay.tab.host')}</button>
+				<button class:active={tab === 'chat'} onclick={() => (tab = 'chat')}>{tr('overlay.tab.chat')}</button>
+				<button class:active={tab === 'settings'} onclick={() => (tab = 'settings')}>{tr('overlay.tab.settings')}</button>
 			</nav>
 
 			<div class="body">
 				{#if tab === 'connect'}
 					<div class="rows">
 						<label>
-							<span>Адрес сервера</span>
-							<input bind:value={addressDraft} placeholder="например 203.0.113.10" spellcheck="false" />
+							<span>{tr('overlay.address')}</span>
+							<input bind:value={addressDraft} placeholder={tr('overlay.address.placeholder')} spellcheck="false" />
 						</label>
 						<label>
-							<span>Порт</span>
+							<span>{tr('overlay.port')}</span>
 							<input bind:value={portDraft} placeholder="7777" spellcheck="false" />
 						</label>
-						<button class="primary" onclick={saveConnection}>Сохранить и подключиться</button>
+						<button class="primary" onclick={saveConnection}>{tr('overlay.saveconnect')}</button>
 					</div>
 
 					<dl class="facts">
-						<div><dt>Вы</dt><dd>{status?.name || '—'}</dd></div>
-						<div><dt>Сектор</dt><dd>{prettySector(status?.sector ?? '')}</dd></div>
-						<div><dt>Номер игрока</dt><dd>{status && status.netId >= 0 ? status.netId : '—'}</dd></div>
+						<div><dt>{tr('overlay.you')}</dt><dd>{status?.name || '—'}</dd></div>
+						<div><dt>{tr('overlay.sector')}</dt><dd>{prettySector(status?.sector ?? '')}</dd></div>
+						<div><dt>{tr('overlay.playerid')}</dt><dd>{status && status.netId >= 0 ? status.netId : '—'}</dd></div>
 					</dl>
 
-					<p class="hint">
-						Порядок запуска не важен: если сервер ещё не поднят, клиент подождёт и подключится сам.
-					</p>
+					<p class="hint">{tr('overlay.orderhint')}</p>
 				{:else if tab === 'host'}
 					{#if status?.serverAvailable}
 						<div class="rows">
 							{#if status?.hosting}
-								<p class="running">Сервер запущен на этой машине.</p>
-								<button class="danger" onclick={() => sendToGame('hostStop', {})}>Остановить сервер</button>
+								<p class="running">{tr('overlay.host.running')}</p>
+								<button class="danger" onclick={() => sendToGame('hostStop', {})}>{tr('overlay.host.stop')}</button>
 							{:else}
-								<button class="primary" onclick={() => sendToGame('hostStart', {})}>Запустить сервер</button>
+								<button class="primary" onclick={() => sendToGame('hostStart', {})}>{tr('overlay.host.start')}</button>
 							{/if}
 						</div>
-						<p class="hint">
-							Чтобы друзья могли зайти, на роутере нужно пробросить порт <b>7777</b> — и TCP, и UDP —
-							на этот компьютер, а им сообщить ваш внешний IP. Пока сервер запущен, держите игру открытой.
-						</p>
+						<p class="hint">{tr('overlay.host.hint')}</p>
 					{:else}
-						<p class="hint">
-							Рядом с плагином нет <code>StarTruckMP.Server.exe</code>, запускать нечего.
-							Сервер можно поднять отдельно — он лежит в релизе проекта.
-						</p>
+						<p class="hint">{tr('overlay.host.missing')}</p>
 					{/if}
 				{:else if tab === 'chat'}
 					<div class="chat-body" bind:this={chatBody}>
 						{#if chat.length === 0}
-							<p class="empty">Сообщений пока нет.</p>
+							<p class="empty">{tr('overlay.chat.empty')}</p>
 						{/if}
 						{#each chat as line, i (i)}
 							<p class="line" class:mine={line.mine}>
 								<span class="who">{line.name}</span>
-								{#if !line.sectorOnly}<span class="scope">всем</span>{/if}
+								{#if !line.sectorOnly}<span class="scope">{tr('overlay.chat.all')}</span>{/if}
 								<span class="text">{line.message}</span>
 							</p>
 						{/each}
 					</div>
 
 					<form class="composer" onsubmit={(e) => { e.preventDefault(); send(); }}>
-						<input bind:value={draft} maxlength="300" placeholder="Сообщение…" />
-						<button type="submit" class="primary">Отправить</button>
+						<input bind:value={draft} maxlength="300" placeholder={tr('overlay.chat.placeholder')} />
+						<button type="submit" class="primary">{tr('overlay.chat.send')}</button>
 					</form>
 					<label class="check">
 						<input type="checkbox" bind:checked={sectorOnly} />
-						<span>Только своему сектору</span>
+						<span>{tr('overlay.chat.sectoronly')}</span>
 					</label>
 				{:else if settings}
 					<div class="rows">
@@ -206,7 +202,7 @@
 								checked={settings.showNameplates}
 								onchange={(e) => toggle('showNameplates', e.currentTarget.checked)}
 							/>
-							<span>Ники над грузовиками<small>Применится к тем, кто появится после переключения.</small></span>
+							<span>{tr('overlay.set.nameplates')}<small>{tr('overlay.set.nameplates.hint')}</small></span>
 						</label>
 
 						<label class="check">
@@ -215,7 +211,7 @@
 								checked={settings.remoteCollisions}
 								onchange={(e) => toggle('remoteCollisions', e.currentTarget.checked)}
 							/>
-							<span>Столкновения с чужими грузовиками<small>По умолчанию выключены: из-за задержки чужой грузовик сталкивается там, где его визуально нет.</small></span>
+							<span>{tr('overlay.set.collisions')}<small>{tr('overlay.set.collisions.hint')}</small></span>
 						</label>
 
 						<label class="check">
@@ -224,7 +220,7 @@
 								checked={settings.ignoreSslValidation}
 								onchange={(e) => toggle('ignoreSslValidation', e.currentTarget.checked)}
 							/>
-							<span>Не проверять сертификат сервера<small>Нужно для серверов с самоподписанным сертификатом — то есть почти для всех.</small></span>
+							<span>{tr('overlay.set.ssl')}<small>{tr('overlay.set.ssl.hint')}</small></span>
 						</label>
 					</div>
 				{/if}
@@ -234,7 +230,7 @@
 				<div class="notice">{notice}</div>
 			{/if}
 
-			<footer>F2 — открыть и закрыть это меню, Esc — закрыть</footer>
+			<footer>{tr('overlay.footer')}</footer>
 		</section>
 	</div>
 {/if}

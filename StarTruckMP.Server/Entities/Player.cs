@@ -14,6 +14,9 @@ public class Player(int id)
     public string Sector { get; set; } = "none";
     public string Livery { get; set; } = string.Empty;
 
+    /// <summary>The whole look of the truck as the owner last reported it, or null before they did.</summary>
+    public StarTruckMP.Shared.Dto.TruckAppearance? Appearance { get; set; }
+
     /// <summary>
     /// Round-trip time in milliseconds as LiteNetLib last measured it, or -1 before the first
     /// measurement. Only the server can know this for every player, so it is the server that

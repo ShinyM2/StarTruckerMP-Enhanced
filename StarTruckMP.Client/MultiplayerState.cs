@@ -1,3 +1,5 @@
+﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 
 namespace StarTruckMP.Client;
@@ -48,4 +50,23 @@ internal static class MultiplayerState
         Chat.Add(line);
         if (Chat.Count > ChatLimit) Chat.RemoveAt(0);
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Who is on the air
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>A voice counts as still speaking this long after its last frame, so a gap between words does not flicker.</summary>
+    private const long SpeakingHoldMs = 350;
+
+    /// <summary>Last voice frame per player, as <see cref="Environment.TickCount64"/>. Written from the network thread.</summary>
+    private static readonly ConcurrentDictionary<int, long> _lastVoice = new();
+
+    /// <summary>Called for every voice frame that arrives from a player.</summary>
+    public static void MarkSpeaking(int netId) => _lastVoice[netId] = Environment.TickCount64;
+
+    /// <summary>True while frames from this player keep arriving.</summary>
+    public static bool IsSpeaking(int netId) =>
+        _lastVoice.TryGetValue(netId, out var ticks) && Environment.TickCount64 - ticks < SpeakingHoldMs;
+
+    public static void ForgetSpeaker(int netId) => _lastVoice.TryRemove(netId, out _);
 }

@@ -7,5 +7,5 @@ public class UpdateLiveryDto
 {
     public int NetId { get; set; }
     public string Livery { get; set; } = string.Empty;
+    public TruckAppearance? Appearance { get; set; }
 }
-

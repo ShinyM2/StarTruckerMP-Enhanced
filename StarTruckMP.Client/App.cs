@@ -13,6 +13,11 @@ public static class App
     public static ConfigEntry<string> MicrophoneDeviceName;
     public static ConfigEntry<bool> PreferSystemDefaultMicrophone;
     public static ConfigEntry<float> RadioEffectOutputGain;
+    public static ConfigEntry<bool> NoiseSuppression;
+    public static ConfigEntry<float> MicrophoneGain;
+    public static ConfigEntry<float> RadioVolume;
+    public static ConfigEntry<bool> MuteRadioDuringDialogue;
+    public static ConfigEntry<int> RadioEffectStrength;
     public static ConfigEntry<bool> IgnoreSslValidation;
     public static ConfigEntry<bool> ShowNameplates;
     public static ConfigEntry<bool> RemoteCollisions;
@@ -26,6 +31,11 @@ public static class App
         MicrophoneDeviceName = config.Bind("Audio", "MicrophoneDeviceName", string.Empty, "Exact microphone device name to use. Leave empty to auto-select.");
         PreferSystemDefaultMicrophone = config.Bind("Audio", "PreferSystemDefaultMicrophone", true, "When auto-selecting, try the Windows default microphone before explicit devices.");
         RadioEffectOutputGain = config.Bind("Audio", "RadioEffectOutputGain", 1.0f, "Final output gain applied after the NWaves radio voice effect.");
+        NoiseSuppression = config.Bind("Audio", "NoiseSuppression", true, "Run the microphone through RNNoise before sending. Turn off if your headset already suppresses noise and voices come out muffled.");
+        MicrophoneGain = config.Bind("Audio", "MicrophoneGain", 1.0f, "Microphone volume multiplier, 1.0 = as captured. Check it with the microphone test on the multiplayer page.");
+        RadioVolume = config.Bind("Audio", "RadioVolume", 1.0f, "How loud other players come out of the CB radio, 1.0 = as received.");
+        MuteRadioDuringDialogue = config.Bind("Audio", "MuteRadioDuringDialogue", true, "Mute other players while the game's own radio conversation is running, so an NPC call is not talked over. Your talk button never transmits during one either way.");
+        RadioEffectStrength = config.Bind("Audio", "RadioEffect", 2, "How much other players' voices are coloured like a CB radio: 0 = clean voice, 1 = band and compression only, 2 = the full set with clipping, hiss, crackle and squelch bursts.");
         IgnoreSslValidation = config.Bind("Connection", "IgnoreSslValidation", true, "Accept the server's self-signed certificate. Every StarTruckMP server generates one on first start, so this stays on unless the host installed a real certificate.");
         ShowNameplates = config.Bind("Multiplayer", "ShowNameplates", true, "Show other players' names above their trucks.");
         RemoteCollisions = config.Bind("Multiplayer", "RemoteCollisions", false, "Let other players' trucks collide with you. Off by default: with any latency the collision happens where the truck is not.");

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using Il2CppInterop.Runtime;
+using StarTruckMP.Client.Audio;
 using StarTruckMP.Client.Synchronization;
 using TMPro;
 using UnityEngine;
@@ -17,11 +18,18 @@ namespace StarTruckMP.Client.UI;
 /// no <c>DisplayScreen</c>, no <c>OptionScreen</c> and not a single settings row, only its menu
 /// buttons. So the page is a title plate and a column of cloned <see cref="MenuButton"/>s in the
 /// menu's own container, laid out the way the game's settings hub is: pick a section first, then
-/// see only what belongs to it.
+/// see only what belongs to it. Every word on it comes from <see cref="Strings"/>, in the
+/// language the game is showing.
 /// </summary>
 internal static class MultiplayerScreen
 {
-    private enum Page { Root, Host, Player, Display }
+    private enum Page { Root, Host, Player, Display, Voice }
+
+    /// <summary>The microphone volumes a click steps through, as multipliers.</summary>
+    private static readonly float[] GainSteps = { 0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 2.5f, 3f };
+
+    /// <summary>The radio volumes a click steps through, as multipliers.</summary>
+    private static readonly float[] VolumeSteps = { 0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f };
 
     /// <summary>Amber, for the changeable half of a row at rest.</summary>
     private const string RestingValue = "#EFC806";
@@ -37,6 +45,9 @@ internal static class MultiplayerScreen
     private static readonly Dictionary<Page, List<GameObject>> _pages = new();
     private static readonly List<GameObject> _hidden = new();
 
+    /// <summary>Rows whose label is fixed, so it can be redrawn when the language changes.</summary>
+    private static readonly List<(GameObject Row, string Key)> _labelled = new();
+
     private static TMP_InputField _addressField;
     private static TMP_InputField _portField;
 
@@ -50,12 +61,20 @@ internal static class MultiplayerScreen
     private static GameObject _collisionsRow;
     private static GameObject _ghostRow;
     private static GameObject _chatKeyRow;
+    private static GameObject _micRow;
+    private static GameObject _micTestRow;
+    private static GameObject _micGainRow;
+    private static GameObject _denoiseRow;
+    private static GameObject _radioVolumeRow;
+    private static GameObject _radioEffectRow;
+    private static GameObject _muteDialogueRow;
 
     /// <summary>Set while the chat-key row is waiting for the player to press its replacement.</summary>
     private static bool _listening;
 
     private static Page _page = Page.Root;
     private static bool _open;
+    private static string _language;
 
     public static bool IsOpen => _open;
 
@@ -72,6 +91,7 @@ internal static class MultiplayerScreen
         // The menu is rebuilt whenever the player returns to it, so the old rows are gone.
         _pages.Clear();
         _hidden.Clear();
+        _labelled.Clear();
         _title = null;
         _open = false;
     }
@@ -133,6 +153,7 @@ internal static class MultiplayerScreen
 
         _hidden.Clear();
         _open = false;
+        VoiceInputComponent.SetTesting(false);
     }
 
     /// <summary>Keeps the live rows — connection and hosting state — current while the page is up.</summary>
@@ -209,6 +230,9 @@ internal static class MultiplayerScreen
     {
         _page = page;
 
+        // Hearing yourself is a thing you do on the radio page and nowhere else.
+        if (page != Page.Voice) VoiceInputComponent.SetTesting(false);
+
         foreach (var entry in _pages)
         {
             var visible = entry.Key == page;
@@ -220,10 +244,11 @@ internal static class MultiplayerScreen
 
         SetTitle(page switch
         {
-            Page.Host => Text("ХОСТ", "HOST"),
-            Page.Player => Text("ИГРОК", "PLAYER"),
-            Page.Display => Text("ОТОБРАЖЕНИЕ", "DISPLAY"),
-            _ => Text("МУЛЬТИПЛЕЕР", "MULTIPLAYER")
+            Page.Host => Strings.Get("title.host"),
+            Page.Player => Strings.Get("title.player"),
+            Page.Display => Strings.Get("title.display"),
+            Page.Voice => Strings.Get("title.radio"),
+            _ => Strings.Get("title.multiplayer")
         });
 
         Refresh();
@@ -250,24 +275,25 @@ internal static class MultiplayerScreen
         BuildTitle();
 
         // Root: choose a role first, exactly as the settings hub asks for a section first.
-        ActionRow(Page.Root, Text("Хост — создать свой сервер", "Host — run a server"), () => Open(Page.Host));
-        ActionRow(Page.Root, Text("Игрок — подключиться", "Player — join a server"), () => Open(Page.Player));
-        ActionRow(Page.Root, Text("Отображение", "Display"), () => Open(Page.Display));
-        ActionRow(Page.Root, Text("Назад", "Back"), Hide);
+        LabelledRow(Page.Root, "root.host", () => Open(Page.Host));
+        LabelledRow(Page.Root, "root.player", () => Open(Page.Player));
+        LabelledRow(Page.Root, "root.display", () => Open(Page.Display));
+        LabelledRow(Page.Root, "root.radio", () => Open(Page.Voice));
+        BackRow(Page.Root, Hide);
 
         // Player.
-        _addressField = TextRow(Page.Player, Text("Адрес сервера", "Server address"), App.ServerAddress.Value);
-        _portField = TextRow(Page.Player, Text("Порт", "Port"), App.ServerPort.Value);
-        ActionRow(Page.Player, Text("Подключиться", "Connect"), Connect);
+        _addressField = TextRow(Page.Player, Strings.Get("player.address"), App.ServerAddress.Value);
+        _portField = TextRow(Page.Player, Strings.Get("player.port"), App.ServerPort.Value);
+        LabelledRow(Page.Player, "player.connect", Connect);
         _statusRow = InfoRow(Page.Player);
-        ActionRow(Page.Player, Text("Назад", "Back"), () => Open(Page.Root));
+        BackRow(Page.Player, () => Open(Page.Root));
 
         // Host.
         _hostToggleRow = ActionRow(Page.Host, string.Empty, ToggleHost);
         _hostStateRow = InfoRow(Page.Host);
         _shareRow = InfoRow(Page.Host);
         _copyRow = ActionRow(Page.Host, string.Empty, CopyShareText);
-        ActionRow(Page.Host, Text("Назад", "Back"), () => Open(Page.Root));
+        BackRow(Page.Host, () => Open(Page.Root));
 
         // Display.
         _nameplatesRow = ActionRow(Page.Display, string.Empty, () =>
@@ -294,8 +320,51 @@ internal static class MultiplayerScreen
             Refresh();
         });
 
-        ActionRow(Page.Display, Text("Назад", "Back"), () => Open(Page.Root));
+        BackRow(Page.Display, () => Open(Page.Root));
 
+        // Radio. Values step round on a click, the way the chat key does, because the menu's rows
+        // have no left/right arrows to borrow.
+        _micRow = ActionRow(Page.Voice, string.Empty, CycleMicrophone);
+
+        _micTestRow = ActionRow(Page.Voice, string.Empty, () =>
+        {
+            VoiceInputComponent.SetTesting(!VoiceInputComponent.Testing);
+            Refresh();
+        });
+
+        _micGainRow = ActionRow(Page.Voice, string.Empty, () =>
+        {
+            App.MicrophoneGain.Value = NextStep(GainSteps, App.MicrophoneGain.Value);
+            Refresh();
+        });
+
+        _denoiseRow = ActionRow(Page.Voice, string.Empty, () =>
+        {
+            App.NoiseSuppression.Value = !App.NoiseSuppression.Value;
+            Refresh();
+        });
+
+        _radioVolumeRow = ActionRow(Page.Voice, string.Empty, () =>
+        {
+            App.RadioVolume.Value = NextStep(VolumeSteps, App.RadioVolume.Value);
+            Refresh();
+        });
+
+        _radioEffectRow = ActionRow(Page.Voice, string.Empty, () =>
+        {
+            App.RadioEffectStrength.Value = (App.RadioEffectStrength.Value + 1) % 3;
+            Refresh();
+        });
+
+        _muteDialogueRow = ActionRow(Page.Voice, string.Empty, () =>
+        {
+            App.MuteRadioDuringDialogue.Value = !App.MuteRadioDuringDialogue.Value;
+            Refresh();
+        });
+
+        BackRow(Page.Voice, () => Open(Page.Root));
+
+        _language = Strings.Language;
         App.Log.LogInfo($"[MP screen] Built {_pages.Count} pages from the menu's own widgets.");
     }
 
@@ -362,6 +431,22 @@ internal static class MultiplayerScreen
 
         var rect = _title.GetComponent<RectTransform>();
         if (rect != null) LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
+    }
+
+    /// <summary>A row whose label is one fixed string from the table.</summary>
+    private static GameObject LabelledRow(Page page, string key, Action action)
+    {
+        var row = ActionRow(page, Strings.Get(key), action);
+        _labelled.Add((row, key));
+        return row;
+    }
+
+    /// <summary>The game's own word for Back, so it matches the menus around it.</summary>
+    private static GameObject BackRow(Page page, Action action)
+    {
+        var row = ActionRow(page, Strings.Back, action);
+        _labelled.Add((row, "common.back"));
+        return row;
     }
 
     /// <summary>
@@ -552,18 +637,28 @@ internal static class MultiplayerScreen
     {
         HostControl.Poll();
 
+        // The game can switch language while the menu is up; the fixed labels follow it.
+        if (_language != Strings.Language)
+        {
+            _language = Strings.Language;
+            foreach (var (row, key) in _labelled)
+            {
+                if (row != null) SetRowText(row, key == "common.back" ? Strings.Back : Strings.Get(key));
+            }
+        }
+
         if (_statusRow != null)
         {
             SetRowText(_statusRow, Network.NetId != -1
-                ? Text($"Состояние:  подключено, {PlayerState.Name}", $"Status:  connected, {PlayerState.Name}")
-                : Text("Состояние:  не подключено", "Status:  not connected"));
+                ? Strings.Get("player.status.connected", PlayerState.Name)
+                : Strings.Get("player.status.disconnected"));
         }
 
         if (_hostToggleRow != null)
         {
-            SetRowValue(_hostToggleRow, Text("Сервер:  ", "Server:  "), HostControl.IsHosting
-                ? Text("остановить", "stop")
-                : Text("запустить", "start"));
+            SetRowValue(_hostToggleRow, Strings.Get("host.server"), HostControl.IsHosting
+                ? Strings.Get("host.stop")
+                : Strings.Get("host.start"));
         }
 
         if (_hostStateRow != null)
@@ -571,40 +666,147 @@ internal static class MultiplayerScreen
             // A failure explains itself here rather than leaving the row to quietly flip back.
             SetRowText(_hostStateRow, HostControl.LastMessage
                                       ?? (HostControl.IsHosting
-                                          ? Text("Сервер работает на этом компьютере", "Server is running on this machine")
-                                          : Text("Сервер не запущен", "Server is not running")));
+                                          ? Strings.Get("host.running")
+                                          : Strings.Get("host.notrunning")));
         }
 
         if (_shareRow != null)
         {
             SetRowText(_shareRow, HostControl.IsHosting
-                ? Text($"Друзьям:  {NetworkAddresses.Share}  ·  порт {App.ServerPort.Value} (TCP и UDP)",
-                       $"Give friends:  {NetworkAddresses.Share}  ·  port {App.ServerPort.Value} (TCP and UDP)")
-                : Text("Запустите сервер, чтобы получить адрес для друзей",
-                       "Start the server to get an address to share"));
+                ? Strings.Get("host.share", NetworkAddresses.Share, App.ServerPort.Value)
+                : Strings.Get("host.share.hint"));
         }
 
         if (_copyRow != null)
         {
             SetRowText(_copyRow, Time.unscaledTime < _copiedUntil
-                ? Text("Скопировано в буфер обмена", "Copied to clipboard")
-                : Text("Скопировать данные для друзей", "Copy details for friends"));
+                ? Strings.Get("host.copied")
+                : Strings.Get("host.copy"));
         }
 
         if (_nameplatesRow != null)
-            SetRowValue(_nameplatesRow, Text("Ники над грузовиками:  ", "Nameplates:  "), OnOff(App.ShowNameplates.Value));
+            SetRowValue(_nameplatesRow, Strings.Get("display.nameplates"), OnOff(App.ShowNameplates.Value));
 
         if (_collisionsRow != null)
-            SetRowValue(_collisionsRow, Text("Столкновения с игроками:  ", "Collide with players:  "), OnOff(App.RemoteCollisions.Value));
+            SetRowValue(_collisionsRow, Strings.Get("display.collisions"), OnOff(App.RemoteCollisions.Value));
 
         if (_ghostRow != null)
-            SetRowValue(_ghostRow, Text("Прозрачные у ворот и боксов:  ", "Ghost at gates and bays:  "), OnOff(App.GhostMode.Value));
+            SetRowValue(_ghostRow, Strings.Get("display.ghost"), OnOff(App.GhostMode.Value));
 
         if (_chatKeyRow != null)
-            SetRowValue(_chatKeyRow, Text("Клавиша чата:  ", "Chat key:  "),
+            SetRowValue(_chatKeyRow, Strings.Get("display.chatkey"),
                 _listening
-                    ? Text("нажмите клавишу", "press a key")
+                    ? Strings.Get("display.presskey")
                     : MonitorPanel.KeyName(App.ChatKey.Value));
+
+        RefreshVoice();
+    }
+
+    private static void RefreshVoice()
+    {
+        if (_micRow != null)
+            SetRowValue(_micRow, Strings.Get("voice.microphone"), MicrophoneName());
+
+        if (_micTestRow != null)
+        {
+            if (VoiceInputComponent.Testing)
+                SetRowValue(_micTestRow, Strings.Get("voice.testing"), LevelBar(VoiceInputComponent.InputLevel) + Strings.Get("voice.test.stop"));
+            else if (!VoiceInputComponent.MicrophoneRunning)
+                SetRowValue(_micTestRow, Strings.Get("voice.microphone"), Strings.Get("voice.test.nomic"));
+            else
+                SetRowText(_micTestRow, Strings.Get("voice.test"));
+        }
+
+        if (_micGainRow != null)
+            SetRowValue(_micGainRow, Strings.Get("voice.micvolume"), Percent(App.MicrophoneGain.Value));
+
+        if (_denoiseRow != null)
+        {
+            SetRowValue(_denoiseRow, Strings.Get("voice.denoise"),
+                VoiceInputComponent.DenoiserAvailable || !App.NoiseSuppression.Value
+                    ? OnOff(App.NoiseSuppression.Value)
+                    : Strings.Get("voice.unavailable"));
+        }
+
+        if (_radioVolumeRow != null)
+            SetRowValue(_radioVolumeRow, Strings.Get("voice.radiovolume"), Percent(App.RadioVolume.Value));
+
+        if (_radioEffectRow != null)
+        {
+            var name = RadioVoiceEffectProcessor.Current switch
+            {
+                RadioVoiceEffectProcessor.Strength.Off => Strings.Get("voice.effect.off"),
+                RadioVoiceEffectProcessor.Strength.Light => Strings.Get("voice.effect.light"),
+                _ => Strings.Get("voice.effect.full")
+            };
+
+            SetRowValue(_radioEffectRow, Strings.Get("voice.effect"), name);
+        }
+
+        if (_muteDialogueRow != null)
+            SetRowValue(_muteDialogueRow, Strings.Get("voice.mutedialogue"), OnOff(App.MuteRadioDuringDialogue.Value));
+    }
+
+    /// <summary>
+    /// Steps to the next microphone: automatic choice first, then every device Windows lists.
+    /// The change is applied at once so the test row can confirm it.
+    /// </summary>
+    private static void CycleMicrophone()
+    {
+        var devices = VoiceInputComponent.Devices();
+        var current = App.MicrophoneDeviceName.Value ?? VoiceInputComponent.AutoDevice;
+
+        var index = Array.FindIndex(devices, d => string.Equals(d, current, StringComparison.OrdinalIgnoreCase));
+        var next = index + 1 < devices.Length ? devices[index + 1] : VoiceInputComponent.AutoDevice;
+
+        App.Log.LogInfo($"[MP screen] Microphone set to '{(next.Length == 0 ? "auto" : next)}'.");
+        VoiceInputComponent.SelectDevice(next);
+        Refresh();
+    }
+
+    private static string MicrophoneName()
+    {
+        var configured = App.MicrophoneDeviceName.Value;
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            var actual = VoiceInputComponent.DeviceLabel;
+            return actual == null || actual.StartsWith("<")
+                ? Strings.Get("voice.auto")
+                : Strings.Get("voice.auto") + $" ({Shorten(actual, 26)})";
+        }
+
+        return Shorten(configured, 34);
+    }
+
+    private static string Shorten(string text, int length) =>
+        text.Length <= length ? text : text.Substring(0, length - 1) + "…";
+
+    /// <summary>Eight cells, filled to the level; the top cell needs a genuinely loud signal.</summary>
+    private static string LevelBar(float level)
+    {
+        const int cells = 8;
+        var filled = Mathf.Clamp(Mathf.RoundToInt(Mathf.Sqrt(Mathf.Clamp01(level)) * cells), 0, cells);
+        return new string('▮', filled) + new string('▯', cells - filled);
+    }
+
+    private static string Percent(float multiplier) => $"{Mathf.RoundToInt(multiplier * 100f)}%";
+
+    /// <summary>The step after the current value, wrapping to the first; an unlisted value goes to the nearest.</summary>
+    private static float NextStep(float[] steps, float current)
+    {
+        var index = 0;
+        var best = float.MaxValue;
+        for (var i = 0; i < steps.Length; i++)
+        {
+            var distance = Mathf.Abs(steps[i] - current);
+            if (distance < best)
+            {
+                best = distance;
+                index = i;
+            }
+        }
+
+        return steps[(index + 1) % steps.Length];
     }
 
     /// <summary>
@@ -617,17 +819,11 @@ internal static class MultiplayerScreen
         var address = NetworkAddresses.Public ?? NetworkAddresses.Local ?? "?";
         var port = App.ServerPort.Value;
 
-        var text = Localisation.IsRussian
-            ? $"Сервер StarTruckMP\nАдрес: {address}\nПорт: {port} (TCP и UDP)"
-            : $"StarTruckMP server\nAddress: {address}\nPort: {port} (TCP and UDP)";
+        var text = $"{Strings.Get("host.text.title")}\n{Strings.Get("host.text.address")}: {address}\n{Strings.Get("host.text.port", port)}";
 
         var local = NetworkAddresses.Local;
         if (NetworkAddresses.Public != null && local != null)
-        {
-            text += Localisation.IsRussian
-                ? $"\nВ одной сети: {local}"
-                : $"\nSame network: {local}";
-        }
+            text += $"\n{Strings.Get("host.text.local")}: {local}";
 
         try
         {
@@ -643,8 +839,7 @@ internal static class MultiplayerScreen
         Refresh();
     }
 
-    private static string OnOff(bool value) =>
-        value ? Text("вкл.", "on") : Text("выкл.", "off");
+    private static string OnOff(bool value) => value ? Strings.On : Strings.Off;
 
     private static void Connect()
     {
@@ -683,6 +878,4 @@ internal static class MultiplayerScreen
     }
 
     #endregion
-
-    private static string Text(string russian, string latin) => Localisation.IsRussian ? russian : latin;
 }

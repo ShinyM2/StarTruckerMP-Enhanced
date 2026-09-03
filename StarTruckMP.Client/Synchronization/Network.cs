@@ -397,6 +397,7 @@ public class Network
         {
             NetId = snapshot.NetId,
             Livery = snapshot.Livery,
+            Appearance = snapshot.Appearance
         });
 
         OnTrailerUpdate?.Invoke(new UpdateTrailerDto

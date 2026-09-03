@@ -12,6 +12,7 @@ using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.Injection;
+using StarTruckMP.Client.Audio;
 using StarTruckMP.Client.Authentication;
 using StarTruckMP.Client.Components;
 using StarTruckMP.Client.Http;
@@ -78,7 +79,8 @@ public class Plugin : BasePlugin
         ClassInjector.RegisterTypeInIl2Cpp<TruckControllerComponent>();
         ClassInjector.RegisterTypeInIl2Cpp<GameEventsComponent>();
         ClassInjector.RegisterTypeInIl2Cpp<NetworkEventsComponent>();
-        ClassInjector.RegisterTypeInIl2Cpp<RunCodeComponent>();
+        ClassInjector.RegisterTypeInIl2Cpp<VoiceInputComponent>();
+        ClassInjector.RegisterTypeInIl2Cpp<AppearanceSyncComponent>();
         ClassInjector.RegisterTypeInIl2Cpp<CbRadioPttComponent>();
         ClassInjector.RegisterTypeInIl2Cpp<CbRadioSpeakerComponent>();
         ClassInjector.RegisterTypeInIl2Cpp<NameplateComponent>();
@@ -86,8 +88,9 @@ public class Plugin : BasePlugin
         ClassInjector.RegisterTypeInIl2Cpp<MultiplayerUiComponent>();
         AddComponent<GameEventsComponent>();
         AddComponent<NetworkEventsComponent>();
-        AddComponent<RunCodeComponent>();
         AddComponent<MultiplayerUiComponent>();
+        AddComponent<VoiceInputComponent>();
+        AddComponent<AppearanceSyncComponent>();
     }
 
     #region Steam auth

@@ -1,71 +1,77 @@
-# Как это работает
+# How it works
 
-Короткое объяснение для игрока: что мод делает, чего не делает и почему.
+A short explanation for the player: what the mod does, what it does not, and why. [Русская версия](HOW-IT-WORKS.ru.md).
 
-## Из чего состоит
+## What it is made of
 
-- **Плагин в игре** (`BepInEx\plugins\StarTruckMP`). BepInEx — загрузчик модов, он стартует вместе с игрой через `winhttp.dll` и подхватывает плагин. Плагин читает положение вашего грузовика, рисует чужие и добавляет меню.
-- **Сервер** (`StarTruckMP.Server.exe`). Маленькая программа, которая принимает данные от всех игроков и пересылает их остальным. Запускается кнопкой из игры или отдельно. Игрового мира на сервере нет — он только почтальон.
-- **Оверлей** (`overlay\StarTruckMP.Overlay.exe`). Прозрачное окно поверх игры с панелью игроков и меню по F2. Ему нужен .NET 10 Runtime.
+- **The plugin in the game** (`BepInEx\plugins\StarTruckMP`). BepInEx is a mod loader; it starts with the game through `winhttp.dll` and picks the plugin up. The plugin reads your truck's position, draws the others and adds the menus.
+- **The server** (`StarTruckMP.Server.exe`). A small program that takes data from every player and passes it to the rest. Started from the game or on its own. There is no game world on the server: it is only a postman.
+- **The overlay** (`overlay\StarTruckMP.Overlay.exe`). A transparent window over the game with the player panel and the F2 menu. It needs the .NET 10 Runtime.
 
-## Чужого мира нет, есть чужие грузовики
+## There is no shared world, there are other trucks
 
-Каждый играет в **своём сохранении**: свои деньги, задания, прогресс, свой грузовик. Мод не объединяет миры, он показывает друг другу грузовики.
+Everyone plays **their own save**: their own money, jobs, progress, truck. The mod does not merge worlds; it shows players each other's trucks.
 
-Раз в 33 мс ваш грузовик отправляет на сервер позицию, поворот и скорость. Сервер рассылает это тем, кто в том же секторе, и у них появляется копия вашего грузовика с вашей ливреей, прицепом и ником над кабиной. Между пакетами копия «дорисовывает» движение по скорости, поэтому на крейсерской она не отстаёт.
+Every 33 ms your truck sends its position, rotation and velocity to the server. The server passes that to whoever is in the same sector, and a copy of your truck appears for them, with your paint, your trailer and your name above the cab. Between packets the copy carries its motion forward by the last velocity, so at cruising speed it does not trail.
 
-Синхронизируется: положение грузовика, ливрея кабины, прицеп (количество и груз), ник, чат, рация.
-Не синхронизируется: груз в кузове, деньги, задания, покупки, состояние станций, космонавт вне грузовика (частично).
+Synchronised: truck position, the truck's whole look (livery, base material, colours, bolt-on parts, wear and dirt), trailer (count and cargo), name, chat, radio.
+Not synchronised: cargo in the bed, money, jobs, purchases, station state, the spacesuited player outside the truck (partly).
 
-## Секторы
+## Sectors
 
-Игра держит в памяти только один сектор — тот, где вы. Поэтому и чужой грузовик может появиться только в **вашем** секторе. Сервер знает, кто где, и рассылает движение только внутри сектора.
+The game keeps only one sector in memory: the one you are in. So another truck can only appear in **your** sector. The server knows who is where and sends movement only within a sector.
 
-Кто в каком секторе — в панели справа (серые строки — в других секторах) и на правом мониторе в кабине. Перезаходить не нужно: прилетели в один сектор — увидели друг друга.
+Who is in which sector is in the panel on the right (grey rows are in other sectors) and on the right-hand cab monitor. No need to reconnect: arrive in the same sector and you see each other.
 
-Проще всего встретиться, начав новую игру: стартовый сектор у всех один.
+The easiest meeting point is a new game: everybody's starting sector is the same.
 
-## Столкновения и гост-режим
+## Collisions and ghost mode
 
-По умолчанию чужие грузовики **не твёрдые**. Из-за задержки сети чужой грузовик всегда чуть не там, где вы его видите, и столкновение с ним выбивало бы вас из курса без видимой причины. Включить можно в Мультиплеер → Отображение → Столкновения.
+By default other players' trucks are **not solid**. Because of network delay the other truck is always slightly off from where you see it, and a collision would knock you off course for no visible reason. Turn them on under Multiplayer → Display → Collide with players.
 
-У **варп-ворот и стыковочных боксов** все толпятся в одной точке. Там чужой грузовик рядом с вами становится полупрозрачным, а под ником появляется `GHOST`. Ваш собственный грузовик никогда не меняется. Отключается там же в настройках.
+At **warp gates and docking bays** everyone crowds into the same spot. There, another player's truck near you turns translucent and `GHOST` appears under the name. Your own truck is never changed. Switched off in the same place.
 
-## Интерфейс
+## Interface
 
-- **Главное меню → Мультиплеер** и **пауза → Мультиплеер**: Хост, Игрок, Отображение. Это родные кнопки игры, просто добавленные.
-- **F2** — оверлей поверх игры: подключение, свой сервер, чат, настройки. Esc закрывает. Панель со списком игроков видна всегда.
-- **Правый монитор в кабине.** Переключите канал стрелками до камеры стыковки — на ней живёт страница мультиплеера: кто на сервере, пинг, чат. Enter открывает строку ввода, Esc отменяет. Пока строка открыта, клавиши не управляют грузовиком.
-- **Пинг** измеряет сервер и рассылает всем раз в две секунды.
-- **Рация** (CB radio) — голос через клавишу рации, как в оригинальном моде. В этом форке не проверялась.
+- **Main menu → Multiplayer** and **pause → Multiplayer**: Host, Player, Display, Radio and microphone. These are the game's own buttons, added. Everything on them is in the language the game is set to.
+- **F2**: the overlay over the game: connection, your own server, chat, settings. Esc closes. The panel with the player list is always visible.
+- **The right-hand cab monitor.** Switch the channel with the arrows to the docking camera; the multiplayer page lives there: who is on the server, ping, chat, and a marker beside whoever is talking on the radio. Enter opens the input line, Esc cancels. The line only opens while you are in the driver's seat, and standing up closes it. While the line is open the keys do not drive the truck.
+- **Ping** is measured by the server and sent to everyone every two seconds.
+- **Radio** (CB radio): voice. Pick up the handset in the cab and hold the game's talk button; everyone on the server hears you, coloured like a radio, with a burst of static as you come on and drop off. While a story conversation is running (an NPC is speaking or you are being offered replies) the radio belongs to the game: your button does not transmit, and by default other players are muted until the call ends. Microphone, its volume, noise suppression, the radio sound and the "hear yourself" test are under Multiplayer → Radio and microphone.
 
-## Настройки
+## Settings
 
-Файл `BepInEx\config\StarTruckMP.Client.cfg`. Всё то же можно менять из игры.
+The file is `BepInEx\config\StarTruckMP.Client.cfg`. Everything in it can also be changed from the game.
 
-| Ключ | Что |
+| Key | What |
 |---|---|
-| `ServerAddress`, `ServerPort` | Куда подключаться. |
-| `IgnoreSslValidation` | Принимать самоподписанный сертификат сервера. Должно быть `true`. |
-| `ShowNameplates` | Ники над грузовиками. |
-| `RemoteCollisions` | Твёрдые ли чужие грузовики. |
-| `GhostMode` | Прозрачность у ворот и боксов. |
-| `ChatKey` | Клавиша чата на мониторе. |
+| `ServerAddress`, `ServerPort` | Where to connect. |
+| `IgnoreSslValidation` | Accept the server's self-signed certificate. Must be `true`. |
+| `ShowNameplates` | Names above trucks. |
+| `RemoteCollisions` | Whether other trucks are solid. |
+| `GhostMode` | Translucency at gates and bays. |
+| `ChatKey` | The chat key on the monitor. |
+| `MicrophoneDeviceName` | Which microphone to use. Empty means choose automatically. |
+| `MicrophoneGain` | Microphone volume, `1.0` is as captured. |
+| `NoiseSuppression` | Noise suppression (RNNoise) before sending. |
+| `RadioVolume` | How loud other players are on the radio. |
+| `RadioEffect` | The radio sound: `0` clean voice, `1` light, `2` full CB. |
+| `MuteRadioDuringDialogue` | Mute players while a story conversation is running. |
 
-## Сервер и порты
+## Server and ports
 
-Сервер слушает порт **7777** дважды: **TCP** для входа и оверлея, **UDP** для игрового трафика. Если хост дома за роутером, оба надо пробросить на его компьютер, иначе снаружи никто не зайдёт. Внешний IP хоста показывает кнопка «Скопировать данные для друзей».
+The server listens on port **7777** twice: **TCP** for login and the overlay, **UDP** for game traffic. If the host is at home behind a router, both have to be forwarded to their computer or nobody from outside gets in. The "Copy details for friends" button shows the host's public IP.
 
-Сервер стартует первым или последним — неважно. Клиент ждёт и подключается сам, при обрыве переподключается.
+The server can start first or last; it does not matter. The client waits and connects by itself, and reconnects after a drop.
 
-## Безопасность
+## Security
 
-Вход по **Steam-билету**: игра просит у Steam одноразовый билет, сервер может проверить его через Steam Web API (если у хоста вписан `SteamWebApiKey` в `server.json`). Без ключа сервер верит клиентам на слово — для игры с друзьями достаточно.
+Login is by **Steam ticket**: the game asks Steam for a one-time ticket, and the server can check it through the Steam Web API (if the host has put a `SteamWebApiKey` into `server.json`). Without the key the server takes clients at their word, which is enough for playing with friends.
 
-Весь игровой трафик шифруется (ECDH + ChaCha20-Poly1305), сертификат HTTPS сервер делает себе сам при первом запуске — поэтому клиент его не проверяет.
+All game traffic is encrypted (ECDH + ChaCha20-Poly1305). The server makes itself an HTTPS certificate on first start, which is why the client does not verify it.
 
-## Что мод кладёт в папку игры
+## What the mod puts into the game folder
 
-`BepInEx\`, `dotnet\`, `winhttp.dll`, `doorstop_config.ini`, `.doorstop_version`. Это BepInEx и его среда выполнения; сам плагин — в `BepInEx\plugins\StarTruckMP`. Файлы игры не трогаются, удаление этих папок возвращает всё как было.
+`BepInEx\`, `dotnet\`, `winhttp.dll`, `doorstop_config.ini`, `.doorstop_version`. That is BepInEx and its runtime; the plugin itself is in `BepInEx\plugins\StarTruckMP`. The game's files are not touched; deleting these folders puts everything back.
 
-Лог мода: `BepInEx\LogOutput.log`. Если что-то не так, ответ обычно там.
+The mod's log: `BepInEx\LogOutput.log`. When something is wrong, the answer is usually there.

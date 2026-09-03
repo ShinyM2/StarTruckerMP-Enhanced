@@ -17,34 +17,43 @@ namespace StarTruckMP.Client.UI;
 /// </summary>
 internal static class Localisation
 {
-    private static bool _learned;
-    private static bool _logged;
+    private static bool _learnedRussian;
+    private static string _logged;
 
-    public static bool IsRussian => FromGame() ?? _learned;
+    /// <summary>The game's language code, lower case: "en", "ru", "de", "pt-br", "zh-cn", ...</summary>
+    public static string Code
+    {
+        get
+        {
+            var fromGame = FromGame();
+            if (fromGame != null) return fromGame;
+            return _learnedRussian ? "ru" : "en";
+        }
+    }
+
+    public static bool IsRussian => Code.StartsWith("ru", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Records the language from a sample of the game's own UI text.
-    ///
-    /// Only ever promotes to Russian. An inconclusive sample — empty text, a raw string id, a
-    /// label whose binding has not run yet — proves nothing, so it must never demote what an
-    /// earlier, better sample established.
+    /// Records the language from a sample of the game's own UI text, for the moment before the
+    /// string table has said. Only ever promotes to Russian: an inconclusive sample proves nothing
+    /// and must never demote what a better sample established.
     /// </summary>
     public static void LearnFrom(string gameText)
     {
-        if (_learned || string.IsNullOrWhiteSpace(gameText)) return;
+        if (_learnedRussian || string.IsNullOrWhiteSpace(gameText)) return;
 
         foreach (var c in gameText)
         {
             if (c >= 0x0400 && c <= 0x04FF)
             {
-                _learned = true;
+                _learnedRussian = true;
                 return;
             }
         }
     }
 
     /// <summary>The loaded string table's language, or null while it is not yet available.</summary>
-    private static bool? FromGame()
+    private static string FromGame()
     {
         try
         {
@@ -53,15 +62,15 @@ internal static class Localisation
             var language = StringTable.language;
             if (string.IsNullOrWhiteSpace(language)) return null;
 
-            var russian = language.StartsWith("ru", StringComparison.OrdinalIgnoreCase);
+            language = language.Trim().ToLowerInvariant();
 
-            if (!_logged)
+            if (_logged != language)
             {
-                _logged = true;
+                _logged = language;
                 App.Log.LogInfo($"[Localisation] Game language: {language}");
             }
 
-            return russian;
+            return language;
         }
         catch
         {

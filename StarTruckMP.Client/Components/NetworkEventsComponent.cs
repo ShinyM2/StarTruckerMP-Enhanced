@@ -56,6 +56,7 @@ public class NetworkEventsComponent : MonoBehaviour
         public string Name = string.Empty;
         public string Sector = "none";
         public string Livery = string.Empty;
+        public TruckAppearance Appearance;
         public int TrailerCount;
         public string TrailerLivery = string.Empty;
         public string TrailerCargoTypeId = string.Empty;
@@ -108,12 +109,11 @@ public class NetworkEventsComponent : MonoBehaviour
 
             ConfigureRemoteTruckPhysics(player.TruckObj);
 
-            AttachNameplate(player.TruckObj, player.PlayerName);
+            AttachNameplate(player.TruckObj, player.PlayerName, netId);
 
             // Replay the paint and cargo we were told about earlier; the truck prefab above was
             // already picked for the right number of containers, so only the contents are left.
-            if (!string.IsNullOrEmpty(state.Livery))
-                player.TruckObj.GetComponentInChildren<AIVehicleCustomiser>(true)?.AssignCabLivery(state.Livery, 0f);
+            TruckAppearanceSync.Apply(player.TruckObj, state.Livery, state.Appearance);
 
             ApplyTrailerContainers(netId, player, state);
         }
@@ -174,16 +174,12 @@ public class NetworkEventsComponent : MonoBehaviour
 
         var currentPos = Vector3.zero;
         var currentRot = Quaternion.identity;
-        var liveryId = StateOf(netId).Livery;
+        var state = StateOf(netId);
 
         if (player.TruckObj != null)
         {
-            // copy actual data
+            // Keep where it was; everything else is rebuilt from what the server told us.
             player.TruckObj.transform.GetPositionAndRotation(out currentPos, out currentRot);
-            var applier = player.TruckObj.GetComponent<AIVehicleCustomiser>()?.m_cabLiveryApplier;
-            if (applier != null)
-                liveryId = applier.CurrentLiveryId ?? applier.AppliedLiveryId ?? liveryId;
-            // delete
             player.TruckObj.SetActive(false);
             DestroyImmediate(player.TruckObj);
         }
@@ -196,11 +192,10 @@ public class NetworkEventsComponent : MonoBehaviour
             return;
         }
 
-        if (!string.IsNullOrEmpty(liveryId))
-            player.TruckObj.GetComponent<AIVehicleCustomiser>()?.AssignCabLivery(liveryId, 0f);
+        TruckAppearanceSync.Apply(player.TruckObj, state.Livery, state.Appearance);
         ConfigureRemoteTruckPhysics(player.TruckObj);
         // The old truck carried the nameplate, so the rebuilt one needs its own.
-        AttachNameplate(player.TruckObj, player.PlayerName);
+        AttachNameplate(player.TruckObj, player.PlayerName, netId);
         App.Log.LogInfo($"Recreated truck for player {netId} with cargo count {cargoCount}");
     }
 
@@ -208,13 +203,14 @@ public class NetworkEventsComponent : MonoBehaviour
     {
         _mainThreadContext.Post(new Action<Object>(_ =>
         {
-            StateOf(liveryDto.NetId).Livery = liveryDto.Livery ?? string.Empty;
+            var state = StateOf(liveryDto.NetId);
+            state.Livery = liveryDto.Livery ?? string.Empty;
+            if (liveryDto.Appearance != null) state.Appearance = liveryDto.Appearance;
 
             if (!_players.TryGetValue(liveryDto.NetId, out NetPlayer player)) return;
-            if (player.TruckObj == null || string.IsNullOrEmpty(liveryDto.Livery)) return;
+            if (player.TruckObj == null) return;
 
-            var customiser = player.TruckObj.GetComponentInChildren<AIVehicleCustomiser>(true);
-            customiser?.AssignCabLivery(liveryDto.Livery, 0f);
+            TruckAppearanceSync.Apply(player.TruckObj, state.Livery, state.Appearance);
         }), null);
     }
 
@@ -392,13 +388,14 @@ public class NetworkEventsComponent : MonoBehaviour
             DestroyImmediate(collider);
     }
 
-    private static void AttachNameplate(GameObject truck, string name)
+    private static void AttachNameplate(GameObject truck, string name, int netId)
     {
         if (truck == null) return;
 
         if (App.ShowNameplates.Value)
         {
             var nameplate = truck.AddComponent<NameplateComponent>();
+            nameplate.NetId = netId;
             nameplate.SetName(name);
         }
 
@@ -637,20 +634,8 @@ public class NetworkEventsComponent : MonoBehaviour
         _connected = true;
         Network.SendServerMessage(new UpdateSectorCmd { Sector = PlayerState.Sector }, PacketType.UpdateSector);
 
-        // Send livery
-        if (PlayerState.Truck != null)
-        {
-            var truckInfo = Utils.ExtractTruckInfo(PlayerState.Truck);
-            if (!string.IsNullOrEmpty(truckInfo.LiveryId))
-            {
-                Network.SendServerMessage(new UpdateLiveryCmd { Livery = truckInfo.LiveryId }, PacketType.UpdateLivery);
-                App.Log.LogInfo($"Sent livery to server: {truckInfo.LiveryId}");
-            }
-            else
-            {
-                App.Log.LogWarning("Could not extract livery from player truck, skipping livery update.");
-            }
-        }
+        // The truck's look — livery, colours, parts, wear — is sent by AppearanceSyncComponent,
+        // which forgets what it last sent on every connection and so reports it afresh here.
     }
 
     private void Unsubscribe()

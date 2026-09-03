@@ -122,9 +122,14 @@ public class MultiplayerUiComponent : MonoBehaviour
             case "chatSend":
                 _mainThreadWork.Enqueue(() => SendChat(payload));
                 break;
+            case "overlayLoaded":
+                // The page has just (re)started its scripts: give it its words before anything else.
+                _mainThreadWork.Enqueue(PushStrings);
+                break;
             case "menuOpened":
                 _mainThreadWork.Enqueue(() =>
                 {
+                    PushStrings();
                     PushSettings();
                     PushStatus();
                     PushChatHistory();
@@ -168,7 +173,7 @@ public class MultiplayerUiComponent : MonoBehaviour
 
         if (Network.NetId == -1)
         {
-            PushNotice("Не подключено к серверу.");
+            PushNotice(Strings.Get("notice.notconnected"));
             return;
         }
 
@@ -210,12 +215,12 @@ public class MultiplayerUiComponent : MonoBehaviour
 
         if (addressChanged)
         {
-            PushNotice("Адрес сохранён. Переподключаюсь…");
+            PushNotice(Strings.Get("notice.addresssaved"));
             Network.Reconnect();
         }
         else
         {
-            PushNotice("Настройки сохранены.");
+            PushNotice(Strings.Get("notice.saved"));
         }
     }
 
@@ -243,6 +248,12 @@ public class MultiplayerUiComponent : MonoBehaviour
     });
 
     private void PushChatHistory() => OverlayManager.PostMessage("chatHistory", _chatHistory);
+
+    /// <summary>
+    /// Every word the overlay shows, in the game's language. The overlay has English built in and
+    /// swaps in whatever arrives here, so the one translation table lives on this side.
+    /// </summary>
+    private void PushStrings() => OverlayManager.PostMessage("strings", Strings.All("overlay."));
 
     private void PushNotice(string text) => OverlayManager.PostMessage("notice", new NoticeState { Text = text });
 

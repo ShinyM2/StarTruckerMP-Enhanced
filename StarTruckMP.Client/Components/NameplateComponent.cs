@@ -1,7 +1,7 @@
 ﻿using System;
+using StarTruckMP.Client.UI;
 using TMPro;
 using UnityEngine;
-using Object = Il2CppSystem.Object;
 
 namespace StarTruckMP.Client.Components;
 
@@ -12,6 +12,7 @@ namespace StarTruckMP.Client.Components;
 /// and dies with that truck — which already only exists while the player shares our sector.
 /// The label is a world-space TextMeshPro mesh turned to face the camera every frame and
 /// scaled with distance, so it stays readable from far away without dwarfing a nearby truck.
+/// While the player is talking on the radio a small marker lights up beside the name.
 /// </summary>
 public class NameplateComponent : MonoBehaviour
 {
@@ -28,14 +29,22 @@ public class NameplateComponent : MonoBehaviour
     private const float MaxScale = 400f;
     private const float ScalePerMetre = 0.035f;
 
+    /// <summary>The on-air marker, in the pale tone of a lit indicator rather than the amber of the name.</summary>
+    private const string SpeakingMark = " <color=#FFF4B8>((•))</color>";
+
     private static TMP_FontAsset _font;
 
     private GameObject _labelObj;
     private TextMeshPro _text;
     private string _pendingName = string.Empty;
     private bool _ghost;
+    private bool _speaking;
+    private string _language;
 
     public NameplateComponent(IntPtr ptr) : base(ptr) { }
+
+    /// <summary>The player this plate belongs to, so it can tell when they are on the radio.</summary>
+    public int NetId { get; set; } = -1;
 
     /// <summary>
     /// Sets the displayed name. Safe to call before the label mesh exists — the value is
@@ -65,9 +74,12 @@ public class NameplateComponent : MonoBehaviour
     {
         if (_text == null) return;
 
-        _text.text = _ghost
-            ? _pendingName + "\n" + (UI.Localisation.IsRussian ? "ГОСТ-РЕЖИМ" : "GHOST")
-            : _pendingName;
+        var line = _pendingName;
+        if (_speaking) line += SpeakingMark;
+        if (_ghost) line += "\n" + Strings.Get("nameplate.ghost");
+
+        _text.text = line;
+        _language = Strings.Language;
     }
 
     private void Start()
@@ -88,6 +100,7 @@ public class NameplateComponent : MonoBehaviour
 
             _text = _labelObj.AddComponent<TextMeshPro>();
             _text.font = font;
+            _text.richText = true;
             Apply();
             _text.fontSize = 8f;
             _text.alignment = TextAlignmentOptions.Center;
@@ -113,6 +126,13 @@ public class NameplateComponent : MonoBehaviour
     private void LateUpdate()
     {
         if (_labelObj == null) return;
+
+        var speaking = NetId >= 0 && MultiplayerState.IsSpeaking(NetId);
+        if (speaking != _speaking || (_ghost && _language != Strings.Language))
+        {
+            _speaking = speaking;
+            Apply();
+        }
 
         var cam = Camera.main;
         if (cam == null) return;
