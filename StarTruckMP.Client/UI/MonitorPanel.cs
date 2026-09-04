@@ -60,18 +60,38 @@ internal static class MonitorPanel
     public static bool IsShowing => _panel != null && _panel.activeSelf;
 
     /// <summary>
-    /// Takes the game's pages back down while ours is up. Called after every Update and again
-    /// straight after the game shows one of its own pages, because that is exactly when the
-    /// trailer readout used to land on top of ours: a hitch puts it up on its own account, with
-    /// no channel change for the channel patch to see.
+    /// Whether a channel is one our page takes: every view of the docking camera's slot.
+    ///
+    /// What the arrows step through is <c>channelIdx</c>; the docking slot alone carries several
+    /// <c>channelViewIdx</c> entries — the camera itself, the trailer readout, the two docked
+    /// pages and the multi-tow page — and the game picks among them on its own the moment a
+    /// trailer is hitched or the truck docks. Matching the one docking entry, as the first version
+    /// did, is why a hitch put the trailer readout where our page had been: the game had moved to
+    /// view 1 of the same slot, and view 1 was not the entry we were looking for.
     /// </summary>
-    public static void Reassert()
+    public static bool Claims(MonitorChannel channel)
+    {
+        if (channel == null || _switcher == null) return false;
+
+        var channels = _switcher.channels;
+        if (channels == null) return false;
+
+        var index = _switcher.dockingCameraChannel;
+        if (index < 0 || index >= channels.Count) return false;
+
+        var docking = channels[index];
+        return docking != null && docking.channelIdx == channel.channelIdx;
+    }
+
+    /// <summary>
+    /// Takes the game's pages back down while ours is up. Called after every Update, so a page
+    /// the game switched on during its own Update this frame is gone before anything is drawn.
+    /// </summary>
+    public static void LateTick()
     {
         if (!IsShowing) return;
         HoldScreen();
     }
-
-    public static void LateTick() => Reassert();
 
     /// <summary>
     /// Builds the page against a switcher, once. Safe to call repeatedly — the truck's monitors
@@ -170,7 +190,15 @@ internal static class MonitorPanel
         if (!visible)
         {
             if (_typing) StopTyping();
-            _panel.SetActive(false);
+            if (_panel.activeSelf) _panel.SetActive(false);
+            return;
+        }
+
+        // Already up: the game has put one of its pages over ours without leaving the slot, and
+        // all that is wanted is to take it down again.
+        if (_panel.activeSelf)
+        {
+            HoldScreen();
             return;
         }
 
@@ -202,9 +230,24 @@ internal static class MonitorPanel
     /// </summary>
     private static void HoldScreen()
     {
-        HideGamePages();
-        BlankCamera();
+        // Switching a page off can bring the game's overlay switcher straight back round to the
+        // patch that called this. One pass at a time, or the two chase each other until the game
+        // stops answering.
+        if (_holding) return;
+
+        _holding = true;
+        try
+        {
+            HideGamePages();
+            BlankCamera();
+        }
+        finally
+        {
+            _holding = false;
+        }
     }
+
+    private static bool _holding;
 
     /// <summary>
     /// The monitor camera, stopped from drawing the world behind our page.

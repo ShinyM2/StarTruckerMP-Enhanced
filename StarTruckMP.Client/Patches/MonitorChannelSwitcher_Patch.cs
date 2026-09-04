@@ -12,7 +12,10 @@ namespace StarTruckMP.Client.Patches;
 /// The channel is the unit the player actually switches between with the arrows under the
 /// screen — the six mirror and approach cameras, the docking camera, and the interface pages.
 /// The game knows which one is the docking camera without any guessing on our part:
-/// <c>MonitorChannelSwitcher.dockingCameraChannel</c> is its index into <c>channels</c>.
+/// <c>MonitorChannelSwitcher.dockingCameraChannel</c> is its index into <c>channels</c>. That
+/// slot has several views — the trailer readout and the docked pages ride on it too — and
+/// <see cref="MonitorPanel.Claims"/> takes all of them, since the game moves between them on
+/// its own whenever a trailer is hitched or the truck docks.
 ///
 /// An earlier version hooked <c>MonitorOverlaySwitcher.ShowOverlayType</c> and replaced the
 /// <c>DockedStatus</c> page instead. That page only appears while the truck is actually docked at
@@ -48,27 +51,12 @@ public class MonitorChannelSwitcher_Patch
                 if (!MonitorPanel.Exists) return;
             }
 
-            MonitorPanel.SetVisible(IsDockingCamera(__instance, __0));
+            MonitorPanel.SetVisible(MonitorPanel.Claims(__0));
         }
         catch (Exception ex)
         {
             App.Log.LogError($"[Monitor] Channel swap failed: {ex.Message}");
         }
-    }
-
-    /// <summary>The channel the game itself calls the docking camera.</summary>
-    private static bool IsDockingCamera(MonitorChannelSwitcher switcher, MonitorChannel channel)
-    {
-        if (channel == null) return false;
-
-        var channels = switcher.channels;
-        if (channels == null) return false;
-
-        var index = switcher.dockingCameraChannel;
-        if (index < 0 || index >= channels.Count) return false;
-
-        var docking = channels[index];
-        return docking != null && docking.Equals(channel);
     }
 
     /// <summary>

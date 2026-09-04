@@ -81,6 +81,10 @@ A monitor steps through **channels** (`MonitorChannelSwitcher.channels`): mirror
 
 The multiplayer page rides the docking-camera channel of the right-hand monitor. The `DockedStatus` *page* was the first target and was wrong: it only exists while docked. The camera behind the page is blanked by clear flags, not the culling mask; the skybox ignores masks. Nothing is restored when the page comes down: the game configures the camera for the incoming channel before the postfix runs.
 
+A channel is a **slot and a view**: `channelIdx` is what the arrows step through, `channelViewIdx` picks among several entries of one slot. The docking slot (`channelIdx=0`) has five entries in `channels` — the camera with the hitching page (view 0), the trailer readout (view 1), two docked pages (views 2, 3) and the multi-tow page (view 4) — and `ProcessAutoViewSelection` moves between them on hitch and dock without the player touching anything. The page therefore claims by `channelIdx` (`MonitorPanel.Claims`), not by identity with the docking entry; matching that one entry is why a hitch used to replace the page with the trailer readout. The trailer and docked readouts remain on the left monitor, which has the same views.
+
+`ShowOverlayType` runs *inside* `ActivateChannel`, before the channel postfix. The overlay postfix must decide from the channel it was given, not from whether our page happens to be active: reasserting on "active" took the incoming channel's page down on the way out and left a black screen. `MonitorPanel.HoldScreen` is guarded against re-entry — switching a page off can bring the overlay switcher straight back round to the same postfix.
+
 ### Nameplates need to ignore depth
 
 Set `_ZTestMode = 8` (Always) and render queue 4000 on the label's **instanced** material (`fontMaterial`). `fontSharedMaterial` restyles every other piece of text using that font.
