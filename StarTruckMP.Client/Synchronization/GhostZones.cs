@@ -19,7 +19,9 @@ namespace StarTruckMP.Client.Synchronization;
 /// </list>
 ///
 /// The scene is searched rather than the save: bays and gates belong to the loaded sector and
-/// change with it, so the list is rebuilt on a slow timer instead of being held for the session.
+/// change with it. Searching a whole scene for two component types is not free, and doing it
+/// every five seconds showed as a regular hitch whenever another truck was near; it now happens
+/// when the sector changes and, as a safety net, once a minute.
 /// </summary>
 internal static class GhostZones
 {
@@ -29,8 +31,8 @@ internal static class GhostZones
     /// <summary>A bay is a parking space, not a region; its crowd stands right on top of it.</summary>
     private const float BayRadius = 150f;
 
-    /// <summary>Bays and gates come and go with the sector, so the list is not kept for long.</summary>
-    private const float RescanSeconds = 5f;
+    /// <summary>Bays and gates do not move within a sector; this is only insurance against one loaded late.</summary>
+    private const float RescanSeconds = 60f;
 
     private static readonly List<Vector3> Centres = new();
     private static readonly List<float> Radii = new();
@@ -50,6 +52,13 @@ internal static class GhostZones
         }
 
         return false;
+    }
+
+    /// <summary>The sector changed: the list is rebuilt the next time anyone asks.</summary>
+    public static void Invalidate()
+    {
+        _nextScan = 0f;
+        _described = false;
     }
 
     private static void Rescan()

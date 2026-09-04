@@ -71,8 +71,10 @@ internal sealed class RemoteTimeline
     /// for a few packets, the record is wrong rather than the packets late. A physics clock does
     /// that after a long hitch or a pause: it never catches the time up. Waiting for the ten-second
     /// window to forget the old maximum meant that many seconds of a truck drawn ahead of its data.
+    /// The threshold sits below the shortest hitch that leaves the physics clock behind (a third of
+    /// a second); eight packets in a row this late is a clock that moved, not a link that jittered.
     /// </summary>
-    private const double OffsetDropSeconds = 0.25;
+    private const double OffsetDropSeconds = 0.12;
     private const int OffsetDropPackets = 8;
 
     private readonly object _lock = new();

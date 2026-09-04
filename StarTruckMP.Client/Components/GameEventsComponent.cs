@@ -31,10 +31,38 @@ public class GameEventsComponent : MonoBehaviour
 
     private volatile bool _reportHitchPending;
 
+    /// <summary>
+    /// The trailer we last had on the hook, so the one we let go of can be named the moment the
+    /// hitch releases — by then the connector has already forgotten it.
+    /// </summary>
+    private CargoContainer _lastHitched;
+
+    /// <summary>
+    /// A trailer we unhitched and left standing in this sector. It is still ours as far as the
+    /// other players are concerned: it keeps travelling in our movement packet as the trailer
+    /// body, so their copy of it stays where we put it and drifts as it drifts, instead of
+    /// vanishing the instant the maglock lets go. Dropped when the game destroys it (delivered),
+    /// when we hitch it back or hitch something else, or when we leave the sector.
+    /// </summary>
+    private CargoContainer _loose;
+
+    private float _nextLooseCheck;
+    private const float LooseCheckSeconds = 0.5f;
+
     private void OnArrivedAtSector(Il2CppSystem.Object sender, Il2CppSystem.EventArgs args)
     {
         var sectorRoot = GameObject.Find("[Sector]");
         if (sectorRoot != null) PlayerState.Sector = sectorRoot.scene.name;
+
+        // A trailer left behind in the old sector is not in the new one, whatever the game does
+        // with the object; the players here must not see it at our old coordinates.
+        if (_loose != null)
+        {
+            _loose = null;
+            _lastHitched = null;
+            SendTrailer(null, 0);
+        }
+
         ArrivedAtSector?.Invoke(PlayerState.Sector);
 
         // This event also fires when a save is loaded. The player and the truck are new objects
@@ -95,7 +123,10 @@ public class GameEventsComponent : MonoBehaviour
         App.Log.LogInfo("[World] Player and truck acquired");
     }
 
-    /// <summary>Tells a server we have just joined about the trailer already on the hook. Game thread.</summary>
+    /// <summary>
+    /// Tells a server we have just joined what trailer is ours: the one on the hook, or the one
+    /// we left standing nearby, or none. Game thread.
+    /// </summary>
     private void ReportCurrentHitch()
     {
         try
@@ -103,6 +134,10 @@ public class GameEventsComponent : MonoBehaviour
             var connector = _starTruck != null ? _starTruck.maglockConnector : null;
             if (connector != null && connector.hitched && connector.hitchedCargo != null)
                 OnHitchCargo(connector.hitchedCargo);
+            else if (Alive(_loose))
+                SendTrailer(_loose, 1);
+            else
+                SendTrailer(null, 0);
         }
         catch (Exception ex)
         {
@@ -110,22 +145,77 @@ public class GameEventsComponent : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// The maglock let go. The trailer is still there, so nothing is sent: it goes on riding in
+    /// the movement packet as a loose body and the other players keep seeing it. Only a trailer
+    /// nobody remembers — a hitch the mod never saw — is reported gone at once.
+    /// </summary>
     private void OnUnhitchCargo()
     {
-        App.Log.LogInfo("Unhitched cargo");
-        // we unhitched a cargo, we need to notify the server
-        Network.SendServerMessage(new UpdateTrailerCmd()
+        _loose = Alive(_lastHitched) ? _lastHitched : null;
+        _lastHitched = null;
+
+        if (_loose != null)
         {
-            TrailerCount = 0,
-            LiveryId = null
-        }, PacketType.UpdateTrailer);
+            App.Log.LogInfo("Unhitched cargo; it stays in the world for the other players while it is here.");
+            return;
+        }
+
+        App.Log.LogInfo("Unhitched cargo");
+        SendTrailer(null, 0);
+    }
+
+    /// <summary>
+    /// The loose trailer stops being ours when the game takes it away — delivered, or cleared
+    /// with the sector — and the other players are told so once. Game thread, now and then.
+    /// </summary>
+    private void WatchLooseTrailer()
+    {
+        if (_loose == null || Time.unscaledTime < _nextLooseCheck) return;
+        _nextLooseCheck = Time.unscaledTime + LooseCheckSeconds;
+
+        if (Alive(_loose)) return;
+
+        _loose = null;
+        App.Log.LogInfo("The trailer we left behind is gone; other players no longer see it.");
+        SendTrailer(null, 0);
+    }
+
+    /// <summary>True while the game still has the object; a destroyed one compares equal to null.</summary>
+    private static bool Alive(UnityEngine.Object o)
+    {
+        try { return o != null; }
+        catch (Exception) { return false; }
     }
 
     private void OnHitchCargo(CargoContainer cargo)
     {
         App.Log.LogInfo("Hitched cargo");
+
+        // Whatever we had left standing is forgotten the moment something is on the hook: the
+        // packet carries one trailer body, and that is the hitched one. Hitching the same
+        // trailer back sends what the others already know, so their copy simply carries on.
+        _loose = null;
+        _lastHitched = cargo;
+
+        var trailersCount = Mathf.Max(1, _starTruck.HitchedTrailersCount);
+        SendTrailer(cargo, trailersCount);
+    }
+
+    /// <summary>What the other players should build behind our cab: this many containers, painted and loaded like this one.</summary>
+    private void SendTrailer(CargoContainer cargo, int trailersCount)
+    {
+        if (cargo == null || trailersCount == 0)
+        {
+            Network.SendServerMessage(new UpdateTrailerCmd
+            {
+                TrailerCount = 0,
+                LiveryId = null
+            }, PacketType.UpdateTrailer);
+            return;
+        }
+
         // we hitched a cargo, we need to retrieve the cargo size, livery and share it to the server
-        var trailersCount = _starTruck.HitchedTrailersCount;
         var livery = cargo.damageApplier.CurrentLiveryId ?? cargo.damageApplier.AppliedLiveryId;
 
         if (string.IsNullOrEmpty(livery))
@@ -177,8 +267,10 @@ public class GameEventsComponent : MonoBehaviour
             ReportCurrentHitch();
         }
 
+        WatchLooseTrailer();
+
         // Real overlay hotkeys: F2 toggles UI mode and Esc closes it.
-        if (Input.GetKeyDown(KeyCode.F2))
+        if (Input.GetKeyDown(KeyCode.F2) && OverlayManager.Enabled)
         {
             OverlayManager.ToggleInteractiveMode();
             App.Log.LogInfo($"[Overlay] F2 => toggle interactive mode => {(OverlayManager.IsInteractiveMode ? "ON" : "OFF")}");
@@ -269,8 +361,12 @@ public class GameEventsComponent : MonoBehaviour
 
         // The hitched trailer swings on a joint behind the truck, and the copy other players see
         // should swing the same way rather than sit bolted to the cab, so it travels as its own body.
+        // A trailer we unhitched and left here travels the same way until the game takes it away,
+        // so it stands, or drifts, for the others exactly where it does for us.
         var starTruck = _starTruck;
         var trailer = starTruck != null ? starTruck.hitchedTrailer : null;
+        if (trailer != null) _lastHitched = trailer;
+        else if (_loose != null && Alive(_loose)) trailer = _loose;
         var hasTrailer = trailer != null;
 
         var trailerPosition = Vector3.zero;

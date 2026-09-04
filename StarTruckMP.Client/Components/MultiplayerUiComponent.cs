@@ -62,6 +62,7 @@ public class MultiplayerUiComponent : MonoBehaviour
         }
 
         MonitorPanel.Tick();
+        GhostNotice.Tick();
         KeepRunning();
         Invites.Tick();
 

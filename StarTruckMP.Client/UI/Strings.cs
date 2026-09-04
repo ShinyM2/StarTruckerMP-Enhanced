@@ -104,17 +104,19 @@ internal static class Strings
         ["title.host"] = new[] { "HOST", "ХОСТ", "HOST", "HÔTE", "ANFITRIÓN", "ANFITRIÃO", "HOST", "HOST", "主机", "主機" },
         ["title.player"] = new[] { "CONNECT", "ПОДКЛЮЧЕНИЕ", "VERBINDEN", "CONNEXION", "CONEXIÓN", "CONEXÃO", "POŁĄCZENIE", "CONNESSIONE", "连接", "連線" },
         ["title.display"] = new[] { "OTHER PLAYERS", "ДРУГИЕ ИГРОКИ", "ANDERE SPIELER", "AUTRES JOUEURS", "OTROS JUGADORES", "OUTROS JOGADORES", "INNI GRACZE", "ALTRI GIOCATORI", "其他玩家", "其他玩家" },
-        ["title.radio"] = new[] { "RADIO AND CHAT", "РАЦИЯ И ЧАТ", "FUNK UND CHAT", "RADIO ET CHAT", "RADIO Y CHAT", "RÁDIO E CHAT", "RADIO I CZAT", "RADIO E CHAT", "无线电与聊天", "無線電與聊天" },
+        ["title.radio"] = new[] { "RADIO AND MICROPHONE", "РАЦИЯ И МИКРОФОН", "FUNK UND MIKROFON", "RADIO ET MICROPHONE", "RADIO Y MICRÓFONO", "RÁDIO E MICROFONE", "RADIO I MIKROFON", "RADIO E MICROFONO", "无线电与麦克风", "無線電與麥克風" },
         ["title.friends"] = new[] { "FRIENDS", "ДРУЗЬЯ", "FREUNDE", "AMIS", "AMIGOS", "AMIGOS", "ZNAJOMI", "AMICI", "好友", "好友" },
-        ["title.mod"] = new[] { "MOD", "МОД", "MOD", "MOD", "MOD", "MOD", "MOD", "MOD", "模组", "模組" },
+        ["title.settings"] = new[] { "SETTINGS", "НАСТРОЙКИ", "EINSTELLUNGEN", "PARAMÈTRES", "AJUSTES", "CONFIGURAÇÕES", "USTAWIENIA", "IMPOSTAZIONI", "设置", "設定" },
 
         // Root page
         ["root.friends"] = new[] { "Friends — invite or join", "Друзья — пригласить или присоединиться", "Freunde — einladen oder beitreten", "Amis — inviter ou rejoindre", "Amigos — invitar o unirse", "Amigos — convidar ou entrar", "Znajomi — zaproś lub dołącz", "Amici — invita o unisciti", "好友 — 邀请或加入", "好友 — 邀請或加入" },
         ["root.player"] = new[] { "Connect by address", "Подключиться по адресу", "Über Adresse verbinden", "Se connecter par adresse", "Conectar por dirección", "Conectar por endereço", "Połącz przez adres", "Connetti tramite indirizzo", "按地址连接", "依位址連線" },
         ["root.host"] = new[] { "Your own server on this PC", "Свой сервер на этом ПК", "Eigener Server auf diesem PC", "Votre serveur sur ce PC", "Tu propio servidor en este PC", "Seu próprio servidor neste PC", "Własny serwer na tym PC", "Il tuo server su questo PC", "在本机运行自己的服务器", "在本機執行自己的伺服器" },
+        ["root.settings"] = new[] { "Settings", "Настройки", "Einstellungen", "Paramètres", "Ajustes", "Configurações", "Ustawienia", "Impostazioni", "设置", "設定" },
+
+        // Settings page: the two subjects with pages of their own
         ["root.display"] = new[] { "Other players", "Другие игроки", "Andere Spieler", "Autres joueurs", "Otros jugadores", "Outros jogadores", "Inni gracze", "Altri giocatori", "其他玩家", "其他玩家" },
-        ["root.radio"] = new[] { "Radio, chat and microphone", "Рация, чат и микрофон", "Funk, Chat und Mikrofon", "Radio, chat et microphone", "Radio, chat y micrófono", "Rádio, chat e microfone", "Radio, czat i mikrofon", "Radio, chat e microfono", "无线电、聊天与麦克风", "無線電、聊天與麥克風" },
-        ["root.mod"] = new[] { "Mod settings", "Настройки мода", "Mod-Einstellungen", "Paramètres du mod", "Ajustes del mod", "Configurações do mod", "Ustawienia moda", "Impostazioni della mod", "模组设置", "模組設定" },
+        ["root.radio"] = new[] { "Radio and microphone", "Рация и микрофон", "Funk und Mikrofon", "Radio et microphone", "Radio y micrófono", "Rádio e microfone", "Radio i mikrofon", "Radio e microfono", "无线电与麦克风", "無線電與麥克風" },
 
         // Player page
         ["player.address"] = new[] { "Server address", "Адрес сервера", "Serveradresse", "Adresse du serveur", "Dirección del servidor", "Endereço do servidor", "Adres serwera", "Indirizzo del server", "服务器地址", "伺服器位址" },
@@ -184,7 +186,8 @@ internal static class Strings
 
         // Mod page: the mod itself, not the game
         ["mod.nopause"] = new[] { "No pause while on a server:  ", "Без паузы на сервере:  ", "Keine Pause auf einem Server:  ", "Pas de pause sur un serveur :  ", "Sin pausa en un servidor:  ", "Sem pausa em um servidor:  ", "Bez pauzy na serwerze:  ", "Nessuna pausa su un server:  ", "在服务器上不暂停：", "在伺服器上不暫停：" },
-        ["mod.nopause.hint"] = new[] { "Menus and the map no longer freeze the world — as it has to be with other players around.", "Меню и карта больше не останавливают мир — иначе с другими игроками нельзя.", "Menüs und die Karte halten die Welt nicht mehr an — mit anderen Spielern geht es nicht anders.", "Les menus et la carte ne figent plus le monde — indispensable avec d'autres joueurs.", "Los menús y el mapa ya no congelan el mundo — imprescindible con otros jugadores.", "Menus e o mapa não congelam mais o mundo — necessário com outros jogadores.", "Menu i mapa nie zatrzymują już świata — inaczej z innymi graczami się nie da.", "I menu e la mappa non congelano più il mondo — necessario con altri giocatori.", "菜单和地图不再冻结世界 — 有其他玩家时必须如此。", "選單和地圖不再凍結世界 — 有其他玩家時必須如此。" },
+        ["mod.overlay"] = new[] { "F2 overlay over the game:  ", "Оверлей F2 поверх игры:  ", "F2-Overlay über dem Spiel:  ", "Superposition F2 sur le jeu :  ", "Superposición F2 sobre el juego:  ", "Sobreposição F2 sobre o jogo:  ", "Nakładka F2 na grę:  ", "Sovrapposizione F2 sul gioco:  ", "游戏上方的 F2 覆盖层：", "遊戲上方的 F2 覆蓋層：" },
+        ["mod.overlay.restart"] = new[] { " — after a restart", " — после перезапуска", " — nach einem Neustart", " — après un redémarrage", " — tras reiniciar", " — após reiniciar", " — po ponownym uruchomieniu", " — dopo un riavvio", " — 重启后生效", " — 重新啟動後生效" },
         ["mod.updates"] = new[] { "Check for updates:  ", "Проверять обновления:  ", "Nach Updates suchen:  ", "Vérifier les mises à jour :  ", "Buscar actualizaciones:  ", "Verificar atualizações:  ", "Sprawdzaj aktualizacje:  ", "Controlla aggiornamenti:  ", "检查更新：", "檢查更新：" },
         ["mod.version"] = new[] { "Mod version:  ", "Версия мода:  ", "Mod-Version:  ", "Version du mod :  ", "Versión del mod:  ", "Versão do mod:  ", "Wersja moda:  ", "Versione della mod:  ", "模组版本：", "模組版本：" },
 
@@ -227,6 +230,9 @@ internal static class Strings
         // Nameplates
         ["nameplate.ghost"] = new[] { "GHOST", "ГОСТ-РЕЖИМ", "GEIST", "FANTÔME", "FANTASMA", "FANTASMA", "DUCH", "FANTASMA", "幽灵", "幽靈" },
 
+        // The line at the top of the screen while trucks around the player are ghosted
+        ["ghost.notice"] = new[] { "Ghost mode — the trucks here are see-through and cannot hit you", "Гост-режим — грузовики здесь прозрачны и не могут вас задеть", "Geistmodus — die Lkw hier sind durchsichtig und können Sie nicht treffen", "Mode fantôme — les camions ici sont transparents et ne peuvent pas vous heurter", "Modo fantasma — los camiones aquí son transparentes y no pueden golpearte", "Modo fantasma — os caminhões aqui são transparentes e não podem atingir você", "Tryb ducha — ciężarówki tutaj są przezroczyste i nie mogą cię uderzyć", "Modalità fantasma — i camion qui sono trasparenti e non possono colpirti", "幽灵模式 — 这里的卡车是透明的，不会撞到你", "幽靈模式 — 這裡的卡車是透明的，不會撞到你" },
+
         // Notices (also shown in the overlay)
         ["notice.notconnected"] = new[] { "Not connected to a server.", "Не подключено к серверу.", "Nicht mit einem Server verbunden.", "Non connecté à un serveur.", "Sin conexión con un servidor.", "Não conectado a um servidor.", "Brak połączenia z serwerem.", "Non connesso a un server.", "未连接到服务器。", "未連線到伺服器。" },
         ["notice.addresssaved"] = new[] { "Address saved. Reconnecting…", "Адрес сохранён. Переподключаюсь…", "Adresse gespeichert. Verbinde neu…", "Adresse enregistrée. Reconnexion…", "Dirección guardada. Reconectando…", "Endereço salvo. Reconectando…", "Adres zapisany. Ponowne łączenie…", "Indirizzo salvato. Riconnessione…", "地址已保存。正在重新连接…", "位址已儲存。正在重新連線…" },
@@ -260,7 +266,7 @@ internal static class Strings
         ["overlay.chat.send"] = new[] { "Send", "Отправить", "Senden", "Envoyer", "Enviar", "Enviar", "Wyślij", "Invia", "发送", "傳送" },
         ["overlay.chat.sectoronly"] = new[] { "Only my sector", "Только своему сектору", "Nur mein Sektor", "Seulement mon secteur", "Solo mi sector", "Só o meu setor", "Tylko mój sektor", "Solo il mio settore", "仅本星区", "僅本星區" },
         ["overlay.set.group.players"] = new[] { "Other players", "Другие игроки", "Andere Spieler", "Autres joueurs", "Otros jugadores", "Outros jogadores", "Inni gracze", "Altri giocatori", "其他玩家", "其他玩家" },
-        ["overlay.set.group.comms"] = new[] { "Radio and chat", "Рация и чат", "Funk und Chat", "Radio et chat", "Radio y chat", "Rádio e chat", "Radio i czat", "Radio e chat", "无线电与聊天", "無線電與聊天" },
+        ["overlay.set.group.comms"] = new[] { "Radio and microphone", "Рация и микрофон", "Funk und Mikrofon", "Radio et microphone", "Radio y micrófono", "Rádio e microfone", "Radio i mikrofon", "Radio e microfono", "无线电与麦克风", "無線電與麥克風" },
         ["overlay.set.group.mod"] = new[] { "Mod", "Мод", "Mod", "Mod", "Mod", "Mod", "Mod", "Mod", "模组", "模組" },
         ["overlay.set.ghost"] = new[] { "Ghost at gates and bays", "Прозрачные у ворот и боксов", "Durchsichtig an Toren und Docks", "Fantôme aux portails et quais", "Transparentes en portales y muelles", "Transparentes em portais e docas", "Przezroczyste przy bramach i dokach", "Trasparenti a portali e moli", "在跃迁门和泊位处透明", "在躍遷門和泊位處透明" },
         ["overlay.set.ghost.hint"] = new[] { "So a truck parked in a bay or a gate cannot block your own way through.", "Чтобы чужой грузовик в боксе или в воротах не перекрывал проезд.", "Damit ein fremder Lkw im Dock oder Tor den Weg nicht versperrt.", "Pour qu'un camion garé dans un quai ou un portail ne bloque pas le passage.", "Para que un camión aparcado en un muelle o portal no bloquee el paso.", "Para que um caminhão parado numa doca ou portal não bloqueie a passagem.", "Aby cudza ciężarówka w doku lub bramie nie blokowała przejazdu.", "Così un camion fermo in un molo o portale non blocca il passaggio.", "避免停在泊位或跃迁门里的卡车挡住你的路。", "避免停在泊位或躍遷門裡的卡車擋住你的路。" },

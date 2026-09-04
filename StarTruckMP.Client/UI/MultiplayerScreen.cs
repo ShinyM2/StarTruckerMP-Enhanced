@@ -27,13 +27,14 @@ namespace StarTruckMP.Client.UI;
 internal static class MultiplayerScreen
 {
     /// <summary>
-    /// One page per subject, and every setting on exactly one of them: who else you see
-    /// (<see cref="Page.Display"/>), how you talk to them (<see cref="Page.Voice"/>), and what
-    /// the mod itself does (<see cref="Page.Mod"/>). Joining has three pages because there are
-    /// three ways in — a Steam friend, an address, or a server of your own — and each shows only
-    /// its own controls, so nothing appears twice.
+    /// The first page is for getting onto a server — a Steam friend, an address, a server of your
+    /// own — and one entry, Settings, for everything that is not that. The settings page carries
+    /// the mod's own switches directly and opens two pages for the two subjects with more than
+    /// a switch or two to them: who else you see (<see cref="Page.Display"/>) and how you talk to
+    /// them (<see cref="Page.Voice"/>). Every setting is on exactly one page, and a player looking
+    /// for one has one place to look.
     /// </summary>
-    private enum Page { Root, Host, Player, Display, Voice, Friends, Mod }
+    private enum Page { Root, Host, Player, Settings, Display, Voice, Friends }
 
     /// <summary>The microphone volumes a click steps through, as multipliers.</summary>
     private static readonly float[] GainSteps = { 0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 2.5f, 3f };
@@ -81,6 +82,7 @@ internal static class MultiplayerScreen
     private static GameObject _nearbyRadiosRow;
     private static GameObject _updatesRow;
     private static GameObject _noPauseRow;
+    private static GameObject _overlayRow;
     private static GameObject _versionRow;
     private static GameObject _updateRow;
     private static GameObject _copyAddressRow;
@@ -379,8 +381,12 @@ internal static class MultiplayerScreen
     public static void Back()
     {
         if (_page == Page.Root) Hide();
-        else Open(Page.Root);
+        else Open(Parent(_page));
     }
+
+    /// <summary>The page a Back press from this one lands on.</summary>
+    private static Page Parent(Page page) =>
+        page == Page.Display || page == Page.Voice ? Page.Settings : Page.Root;
 
     #region Pages
 
@@ -408,10 +414,10 @@ internal static class MultiplayerScreen
         {
             Page.Host => Strings.Get("title.host"),
             Page.Player => Strings.Get("title.player"),
+            Page.Settings => Strings.Get("title.settings"),
             Page.Display => Strings.Get("title.display"),
             Page.Voice => Strings.Get("title.radio"),
             Page.Friends => Strings.Get("title.friends"),
-            Page.Mod => Strings.Get("title.mod"),
             _ => Strings.Get("title.multiplayer")
         });
 
@@ -439,14 +445,12 @@ internal static class MultiplayerScreen
         BuildTitle();
 
         // Root: the three ways onto a server first, in the order a player should try them —
-        // a Steam friend, an address someone gave you, a server of your own — then the three
-        // groups of settings, then the lines that only report.
+        // a Steam friend, an address someone gave you, a server of your own — then one entry
+        // for every setting there is, then the lines that only report.
         if (Invites.Available) LabelledRow(Page.Root, "root.friends", () => Open(Page.Friends));
         LabelledRow(Page.Root, "root.player", () => Open(Page.Player));
         LabelledRow(Page.Root, "root.host", () => Open(Page.Host));
-        LabelledRow(Page.Root, "root.display", () => Open(Page.Display));
-        LabelledRow(Page.Root, "root.radio", () => Open(Page.Voice));
-        LabelledRow(Page.Root, "root.mod", () => Open(Page.Mod));
+        LabelledRow(Page.Root, "root.settings", () => Open(Page.Settings));
         _serverRow = InfoRow(Page.Root);
         _updateRow = InfoRow(Page.Root);
         BackRow(Page.Root, Hide);
@@ -487,7 +491,42 @@ internal static class MultiplayerScreen
             BackRow(Page.Friends, () => Open(Page.Root));
         }
 
-        // Display.
+        // Settings: the two subjects with pages of their own first, then every switch that is a
+        // single row — the chat key, the mod's own behaviour — then the version, so the whole of
+        // what can be set is one page deep and read top to bottom.
+        LabelledRow(Page.Settings, "root.display", () => Open(Page.Display));
+        LabelledRow(Page.Settings, "root.radio", () => Open(Page.Voice));
+
+        _chatKeyRow = ActionRow(Page.Settings, string.Empty, () =>
+        {
+            _listening = !_listening;
+            Refresh();
+        });
+
+        _noPauseRow = ActionRow(Page.Settings, string.Empty, () =>
+        {
+            App.NoPauseInMultiplayer.Value = !App.NoPauseInMultiplayer.Value;
+            Refresh();
+        });
+
+        _updatesRow = ActionRow(Page.Settings, string.Empty, () =>
+        {
+            App.CheckForUpdates.Value = !App.CheckForUpdates.Value;
+            Refresh();
+        });
+
+        // The overlay is a second browser over the game, and on some machines it is the stutter.
+        // Starting and stopping it mid-session is not worth the trouble; it takes at the next start.
+        _overlayRow = ActionRow(Page.Settings, string.Empty, () =>
+        {
+            App.OverlayEnabled.Value = !App.OverlayEnabled.Value;
+            Refresh();
+        });
+
+        _versionRow = InfoRow(Page.Settings);
+        BackRow(Page.Settings, () => Open(Page.Root));
+
+        // Other players: what their trucks do on your screen.
         _nameplatesRow = ActionRow(Page.Display, string.Empty, () =>
         {
             App.ShowNameplates.Value = !App.ShowNameplates.Value;
@@ -506,37 +545,10 @@ internal static class MultiplayerScreen
             Refresh();
         });
 
-        BackRow(Page.Display, () => Open(Page.Root));
+        BackRow(Page.Display, () => Open(Page.Settings));
 
-        // The mod's own switches: neither of them changes anything about the other players, so
-        // neither belongs on the page that does.
-        _noPauseRow = ActionRow(Page.Mod, string.Empty, () =>
-        {
-            App.NoPauseInMultiplayer.Value = !App.NoPauseInMultiplayer.Value;
-            Refresh();
-        });
-
-        InfoRow(Page.Mod, "mod.nopause.hint");
-
-        _updatesRow = ActionRow(Page.Mod, string.Empty, () =>
-        {
-            App.CheckForUpdates.Value = !App.CheckForUpdates.Value;
-            Refresh();
-        });
-
-        _versionRow = InfoRow(Page.Mod);
-        BackRow(Page.Mod, () => Open(Page.Root));
-
-        // Radio and chat: everything you use to reach the other players, the chat key included —
-        // it was on the display page, where nothing else had to do with talking.
-        _chatKeyRow = ActionRow(Page.Voice, string.Empty, () =>
-        {
-            _listening = !_listening;
-            Refresh();
-        });
-
-        // Values step round on a click, the way the chat key does, because the menu's rows have
-        // no left/right arrows to borrow.
+        // Radio and microphone: everything about the voice link. Values step round on a click,
+        // the way the chat key does, because the menu's rows have no left/right arrows to borrow.
         _micRow = ActionRow(Page.Voice, string.Empty, CycleMicrophone);
 
         _micTestRow = ActionRow(Page.Voice, string.Empty, () =>
@@ -581,7 +593,7 @@ internal static class MultiplayerScreen
             Refresh();
         });
 
-        BackRow(Page.Voice, () => Open(Page.Root));
+        BackRow(Page.Voice, () => Open(Page.Settings));
 
         _language = Strings.Language;
         App.Log.LogInfo($"[MP screen] Built {_pages.Count} pages from the menu's own widgets.");
@@ -1124,6 +1136,14 @@ internal static class MultiplayerScreen
         if (_noPauseRow != null)
             SetRowValue(_noPauseRow, Strings.Get("mod.nopause"), OnOff(App.NoPauseInMultiplayer.Value));
 
+        if (_overlayRow != null)
+        {
+            // Says so when the switch and the running state disagree: the change waits for a restart.
+            var overlay = OnOff(App.OverlayEnabled.Value);
+            if (App.OverlayEnabled.Value != OverlayManager.Enabled) overlay += Strings.Get("mod.overlay.restart");
+            SetRowValue(_overlayRow, Strings.Get("mod.overlay"), overlay);
+        }
+
         if (_versionRow != null)
             SetRowText(_versionRow, Strings.Get("mod.version") + PluginInfo.PLUGIN_VERSION);
 
@@ -1340,10 +1360,12 @@ internal static class MultiplayerScreen
 
         if (_micTestRow != null)
         {
-            if (VoiceInputComponent.Testing)
+            // The microphone is only open on a server or during the test, so "no microphone" is
+            // only known, and only said, once the test has asked for one and got none.
+            if (VoiceInputComponent.Testing && VoiceInputComponent.MicrophoneRunning)
                 SetRowValue(_micTestRow, Strings.Get("voice.testing"), LevelBar(VoiceInputComponent.InputLevel) + Strings.Get("voice.test.stop"));
-            else if (!VoiceInputComponent.MicrophoneRunning)
-                SetRowValue(_micTestRow, Strings.Get("voice.microphone"), Strings.Get("voice.test.nomic"));
+            else if (VoiceInputComponent.Testing)
+                SetRowValue(_micTestRow, Strings.Get("voice.microphone"), Strings.Get("voice.test.nomic") + Strings.Get("voice.test.stop"));
             else
                 SetRowText(_micTestRow, Strings.Get("voice.test"));
         }

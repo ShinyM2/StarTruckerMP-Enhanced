@@ -73,6 +73,12 @@ public class Plugin : BasePlugin
 
     private void SetupUI()
     {
+        if (!App.OverlayEnabled.Value)
+        {
+            OverlayManager.Disable();
+            return;
+        }
+
         OverlayManager.Launch();
         // Navigation is deferred until a session token is obtained from auth.
     }

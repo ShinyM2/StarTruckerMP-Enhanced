@@ -27,6 +27,7 @@ public static class App
     public static ConfigEntry<int> MovementRedundancy;
     public static ConfigEntry<KeyCode> ChatKey;
     public static ConfigEntry<bool> GhostMode;
+    public static ConfigEntry<bool> OverlayEnabled;
 
     /// <summary>Steamworks was found next to the game at startup, so Steam sign-in and invites are on.</summary>
     public static bool SteamAvailable;
@@ -52,6 +53,7 @@ public static class App
         MovementRedundancy = config.Bind("Multiplayer", "MovementRedundancy", 2, "How many of the previous states each movement packet repeats (0-3), so a packet the network loses costs nothing. Each one adds about 35 bytes to a packet, twice that with a trailer; 2 covers the usual loss, 0 saves bandwidth on a metered link.");
         GhostMode = config.Bind("Multiplayer", "GhostMode", true, "Fade other players' trucks out when they are in the way at a warp gate or a docking bay. Your own truck is never touched.");
         ChatKey = config.Bind("Multiplayer", "ChatKey", KeyCode.Return, "The key that opens the chat line on the cab monitor. Rebindable from the multiplayer page; keep it off the game's own bindings.");
+        OverlayEnabled = config.Bind("Multiplayer", "Overlay", true, "Run the F2 overlay (the player panel on the right and the F2 menu) as a browser window over the game. Turn off if the game stutters with the mod: the Multiplayer page in the game's menu and the cab monitor carry everything the overlay does. Takes effect at the next start.");
     }
 
     public static ManualLogSource Log;

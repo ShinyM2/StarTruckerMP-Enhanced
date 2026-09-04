@@ -36,14 +36,14 @@ The mod only connects once a save is loaded; in the main menu it just waits.
 
 - There is no shared world. Everyone plays their **own** save; the mod syncs trucks, their paint and parts, trailers, names, chat and the radio. Money and progress stay yours.
 - You only see each other **in the same sector**. The panel on the right and the right-hand cab monitor show who is where. Agree on a sector and the others appear by themselves.
-- **Trucks look like their owners made them**: livery, base material, the colours picked at the paint shop, the exhausts, grill, ornament, sensors, plate and decal where the game lets them be shown, plus wear and dirt. Their headlights switch with the owner's, and a hitched trailer swings behind the cab the way the owner's does.
+- **Trucks look like their owners made them**: livery, base material, the colours picked at the paint shop, the exhausts, grill, ornament, sensors, plate and decal where the game lets them be shown, plus wear and dirt. Their headlights switch with the owner's, and a hitched trailer swings behind the cab the way the owner's does. A trailer the owner unhitches stays where they left it, drifting as it drifts, until they hitch it back, take another or deliver it.
 - **Nameplates** carry the player's colour and the distance to the truck; the same names, in the same colours, sit under their sectors on the galactic map.
 - **CB radio.** Pick up the handset in the cab and hold the game's talk button; everyone on the server hears you with a proper radio sound, squelch bursts included. While the game's own radio conversation is running, the radio belongs to the game. A marker beside a name on the monitor and above a truck shows who is talking.
 - **Inviting friends.** Multiplayer → Friends → **Invite friends via Steam** opens Steam's invite dialog. While you host or are on a server, friends see **Join game** beside your name in their Steam friends list; accepting it starts their game pointed at your server, nothing to type. The Friends page also lists friends already on a server, one press to join them.
 - **The lobby line.** The Multiplayer page says whether the server answers and who is on it, from the main menu already: *Server 203.0.113.10:7777: 3 online — Alice, Bob, Carol*. The Connect page repeats the names under the connection status.
 - **F2** opens the multiplayer menu over the game (connection, chat, settings). **Esc** closes it.
 - **Chat**: sit in the driver's seat, switch the right-hand monitor to the docking camera, press **Enter** (rebindable), type, Enter to send. Standing up closes the line.
-- **Settings**, one subject per page and every setting on exactly one of them: Multiplayer → **Other players** (nameplates, collisions, ghosting at gates), → **Radio, chat and microphone** (chat key, microphone, test, volumes, noise suppression, radio sound, mute during dialogue, radios in nearby trucks), → **Mod settings** (no pause on a server, update check, version). The F2 menu carries the same three groups, in the same order and under the same names. The menu speaks the game's language: English, Russian, German, French, Spanish, Portuguese, Polish, Italian and Chinese.
+- **Settings** live in one place: Multiplayer → **Settings**. That page carries the chat key, no pause on a server, the update check and the F2 overlay switch, and opens two pages for the two bigger subjects: **Other players** (nameplates, collisions, ghosting at gates) and **Radio and microphone** (microphone, test, volumes, noise suppression, radio sound, mute during dialogue, radios in nearby trucks). Every setting is on exactly one page. The F2 menu shows the same groups under the same names. The menu speaks the game's language: English, Russian, German, French, Spanish, Portuguese, Polish, Italian and Chinese.
 - The mod checks GitHub once at startup and says in the menu when a newer release is out.
 
 More in [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
@@ -74,8 +74,9 @@ The log is at `<game folder>\BepInEx\LogOutput.log`. The line `Handshake complet
 | The game "froze" on first launch | BepInEx is generating its files. Wait. |
 | `actively refused it` in the log | The server is not running or the address is wrong. The client connects by itself once the server appears. |
 | `Connection attempt N got no handshake` in the log | The server is unreachable: check the address and the host's port forwarding. |
-| No player panel on the right | .NET 10 Runtime is not installed. |
+| No player panel on the right | .NET 10 Runtime is not installed, or the F2 overlay is switched off under Multiplayer → Settings. |
 | Connected, no errors, nobody visible | You are in different sectors. Check the panel on the right. |
+| The game stutters with the mod, even off a server | Switch the F2 overlay off under Multiplayer → Settings and restart: it is a second browser drawn over the game, and on some machines that is the stutter. The in-game page and the cab monitor carry everything it did. |
 
 ---
 

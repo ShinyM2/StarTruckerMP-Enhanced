@@ -84,8 +84,10 @@ internal static class MonitorPanel
     }
 
     /// <summary>
-    /// Takes the game's pages back down while ours is up. Called after every Update, so a page
-    /// the game switched on during its own Update this frame is gone before anything is drawn.
+    /// Keeps the monitor camera blank behind our page after every Update, the game's included:
+    /// the camera is reconfigured by the game each frame and set back here each frame, which is
+    /// a handful of property writes. The game's pages are no longer taken down here; see
+    /// <see cref="HoldScreen"/>.
     /// </summary>
     public static void LateTick()
     {
@@ -129,6 +131,11 @@ internal static class MonitorPanel
             // Without this the game keeps driving the clone as a docking readout.
             foreach (var logic in _panel.GetComponents<MonitorOverlayDockedStatus>())
                 Object.DestroyImmediate(logic);
+
+            // Drawn last and sorted above the game's pages, so one of those left switched on
+            // under ours is simply covered by the opaque ground rather than fought over.
+            _panel.transform.SetAsLastSibling();
+            RaiseAboveGamePages(_panel);
 
             // Every label carries a binding that would restore the docking text under us.
             foreach (var lookup in _panel.GetComponentsInChildren<StringTableLookup>(true))
@@ -194,16 +201,19 @@ internal static class MonitorPanel
             return;
         }
 
-        // Already up: the game has put one of its pages over ours without leaving the slot, and
-        // all that is wanted is to take it down again.
-        if (_panel.activeSelf)
-        {
-            HoldScreen();
-            return;
-        }
+        // Already up: nothing to do. The game's pages for our slot are declined before they are
+        // shown (see the prefix in MonitorOverlaySwitcher_Patch), so there is nothing to take down.
+        if (_panel.activeSelf) return;
 
-        HoldScreen();
+        // Up first, then the game's pages down: switching one of those off can bring the game's
+        // overlay switcher straight back round to the prefix that called this, and it must find
+        // the page already up and return.
         _panel.SetActive(true);
+
+        // Whatever page the game had up when the channel moved onto our slot comes down once,
+        // here; the game's own call to switch pages for this channel was declined.
+        HideGamePages();
+        BlankCamera();
         Refresh(force: true);
     }
 
@@ -221,12 +231,15 @@ internal static class MonitorPanel
     }
 
     /// <summary>
-    /// Everything that has to stay true for as long as our page holds the screen, reasserted
-    /// every frame rather than once at the channel change.
+    /// What has to stay true for as long as our page holds the screen: the camera blank, since
+    /// the game reconfigures it every frame and the settings set once did not survive one.
     ///
-    /// The overlay switcher puts a page up on its own account — the hitching readout appears the
-    /// moment a maglock target comes into range, with no channel change at all. And the camera
-    /// settings set once in the channel postfix did not survive a single frame.
+    /// The game's own pages used to be taken down here as well, every frame, and that was the
+    /// stutter with a trailer hitched: the game showed its trailer readout for our slot, this
+    /// switched it off, the game showed it again, and every round was a page switched on and
+    /// off with all its labels rebuilt. The game's call to show a page for our slot is now
+    /// declined before the page goes up, so nothing has to be taken down afterwards; the check
+    /// below is insurance against a page switched on some other way, a few times a second.
     /// </summary>
     private static void HoldScreen()
     {
@@ -238,8 +251,13 @@ internal static class MonitorPanel
         _holding = true;
         try
         {
-            HideGamePages();
             BlankCamera();
+
+            if (Time.unscaledTime >= _nextPageSweep)
+            {
+                _nextPageSweep = Time.unscaledTime + PageSweepSeconds;
+                HideGamePages();
+            }
         }
         finally
         {
@@ -248,6 +266,27 @@ internal static class MonitorPanel
     }
 
     private static bool _holding;
+    private static float _nextPageSweep;
+    private const float PageSweepSeconds = 0.5f;
+
+    /// <summary>
+    /// Sorts our page above the game's on the same canvas. A nested canvas with its own order is
+    /// how the UI system does that; sibling order alone would be undone by a page the game
+    /// re-parents or re-orders later.
+    /// </summary>
+    private static void RaiseAboveGamePages(GameObject panel)
+    {
+        try
+        {
+            var canvas = panel.GetComponent<Canvas>() ?? panel.AddComponent<Canvas>();
+            canvas.overrideSorting = true;
+            canvas.sortingOrder = 50;
+        }
+        catch (Exception ex)
+        {
+            App.Log.LogWarning($"[Monitor] Could not sort the page above the game's: {ex.Message}");
+        }
+    }
 
     /// <summary>
     /// The monitor camera, stopped from drawing the world behind our page.

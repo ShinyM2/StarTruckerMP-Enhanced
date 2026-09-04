@@ -217,7 +217,7 @@ public class NameplateComponent : MonoBehaviour
     /// was taken before, and it was not always a face meant to be read at a glance; the menu's
     /// carries the fallbacks that make Cyrillic and CJK names appear, too.
     /// </summary>
-    private static TMP_FontAsset ResolveFont()
+    internal static TMP_FontAsset ResolveFont()
     {
         if (_font != null) return _font;
 

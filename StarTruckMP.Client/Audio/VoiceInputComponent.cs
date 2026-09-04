@@ -121,15 +121,34 @@ public class VoiceInputComponent : MonoBehaviour
 
         // The encoder runs on a background thread; mic reading happens in Update().
         Plugin.StartAttachedThread(EncodeLoop);
-        App.Log.LogInfo("[CB Radio] Voice input ready; the microphone opens on the first frame.");
+        App.Log.LogInfo("[CB Radio] Voice input ready; the microphone opens on joining a server.");
     }
 
     private void Update()
     {
+        // The microphone is open only while it can be heard: on a server, or during the test on
+        // the radio page. It used to be opened at startup and kept running for the whole session,
+        // whether or not the player ever joined anything, and on some machines the engine's
+        // capture alone made the game stutter — in the main menu, with no server anywhere.
+        var wanted = Testing || Network.NetId != -1;
+        if (!wanted)
+        {
+            if (_micClip != null)
+            {
+                StopMicrophoneCapture();
+                App.Log.LogInfo("[CB Radio] Microphone released: not on a server.");
+            }
+
+            _wasCapturing = false;
+            _nextCaptureAttempt = 0f;
+            if (InputLevel > 0f) InputLevel = 0f;
+            return;
+        }
+
         if (_micClip == null && Time.unscaledTime >= _nextCaptureAttempt)
         {
             _nextCaptureAttempt = Time.unscaledTime + CaptureRetrySeconds;
-            StartCapture("startup");
+            StartCapture(Testing ? "microphone test" : "on a server");
         }
 
         var active = Transmitting || Testing;

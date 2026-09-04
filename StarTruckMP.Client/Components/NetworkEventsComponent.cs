@@ -124,11 +124,20 @@ public class NetworkEventsComponent : MonoBehaviour
         public volatile bool TrailerAttachQueued;
         public long TrailerRetryAtTicks;
 
+        /// <summary>How many times the container has been looked for and not found; the search is given up after a while.</summary>
+        public int TrailerAttempts;
+
+        /// <summary>How many container slots the cab prefab was fetched with: a cab with a slot can take a new container without being rebuilt.</summary>
+        public int BuiltSlots;
+
         /// <summary>What the current cab was built for, so an identical trailer update does not rebuild it.</summary>
         public int BuiltTrailerCount;
         public string BuiltTrailerLivery = string.Empty;
         public string BuiltTrailerCargo = string.Empty;
     }
+
+    /// <summary>The container is looked for at most this many times, a quarter of a second apart, before the search stops.</summary>
+    private const int TrailerAttachAttempts = 60;
 
     /// <summary>
     /// Where a copy waits between being made and its first placement. Out of sight, rather than
@@ -191,9 +200,12 @@ public class NetworkEventsComponent : MonoBehaviour
     private void BuildTruck(NetPlayer player, RemoteState state, Vector3 position, Quaternion rotation, TruckControllerComponent previous)
     {
         player.TruckObj = TruckFactory.CreatePlayerTruck(state.TrailerCount, position, rotation);
+        player.BuiltSlots = state.TrailerCount;
         player.BuiltTrailerCount = state.TrailerCount;
         player.BuiltTrailerLivery = state.TrailerLivery;
         player.BuiltTrailerCargo = state.TrailerCargoTypeId;
+        player.TrailerAttempts = 0;
+        player.TrailerRetryAtTicks = 0;
 
         if (player.TruckObj == null)
         {
@@ -301,6 +313,17 @@ public class NetworkEventsComponent : MonoBehaviour
             var container = slots != null && slots.Length > 0 ? slots[0].m_currentContainer : null;
             if (container == null)
             {
+                // A container that never spawns — a livery the game could not load, a cab built
+                // without a slot — must not be searched for four times a second for the rest of
+                // the session; each search walks the whole cab. The next trailer update starts over.
+                if (++player.TrailerAttempts >= TrailerAttachAttempts)
+                {
+                    player.TrailerRetryAtTicks = long.MaxValue;
+                    App.Log.LogWarning($"({player.PlayerId}) The trailer container has not appeared in {TrailerAttachAttempts / 4} s " +
+                                       $"({(slots != null ? slots.Length : 0)} slot(s) on the cab); not looking again until the trailer changes.");
+                    return;
+                }
+
                 player.TrailerRetryAtTicks = Environment.TickCount64 + 250;
                 return;
             }
@@ -326,8 +349,12 @@ public class NetworkEventsComponent : MonoBehaviour
             var mover = container.GetComponent<TruckControllerComponent>() ?? container.AddComponent<TruckControllerComponent>();
             mover.NetId = player.PlayerId;
 
+            // A trailer standing in a bay is as much in the way as the cab in front of it.
+            if (container.GetComponent<GhostComponent>() == null) container.AddComponent<GhostComponent>();
+
             player.TrailerObj = container.gameObject;
             player.TrailerMover = mover;
+            player.TrailerAttempts = 0;
             App.Log.LogInfo($"({player.PlayerId}) Trailer now follows its own body in the movement stream ({slots.Length} slot(s) on the cab).");
         }
         finally
@@ -342,6 +369,66 @@ public class NetworkEventsComponent : MonoBehaviour
         if (player.TrailerObj != null) Destroy(player.TrailerObj);
         player.TrailerObj = null;
         player.TrailerRetryAtTicks = 0;
+        player.TrailerAttempts = 0;
+    }
+
+    /// <summary>
+    /// Takes the player's container away wherever it is: loose in the scene, driven by the
+    /// movement stream, or still sitting in the cab's slot waiting to be taken over. The slot
+    /// is left empty so a new container can be spawned into it.
+    /// </summary>
+    private static void RemoveContainer(NetPlayer player)
+    {
+        DestroyTrailer(player);
+        if (player.TruckObj == null) return;
+
+        try
+        {
+            foreach (var slot in player.TruckObj.GetComponentsInChildren<AIVehicleContainerSlot>(true))
+            {
+                if (slot == null) continue;
+
+                var current = slot.m_currentContainer;
+                if (current != null) Destroy(current);
+                slot.m_currentContainer = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log.LogWarning($"({player.PlayerId}) Could not clear the cab's container slot: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Brings the player's trailer in line with what the server last said, at the least cost:
+    /// nothing for an update that says what is already there; a new container in the cab's
+    /// existing slot when only the container changed, which covers a delivery and the next job
+    /// alike; a rebuilt cab only when the cab has fewer slots than the owner now tows. Every
+    /// rebuild was a hitch on this side, and it used to happen on every hitch and unhitch.
+    /// </summary>
+    private void ReconcileTrailer(NetPlayer player, RemoteState state)
+    {
+        if (player.TruckObj == null) return;
+
+        if (player.BuiltTrailerCount == state.TrailerCount &&
+            player.BuiltTrailerLivery == state.TrailerLivery &&
+            player.BuiltTrailerCargo == state.TrailerCargoTypeId)
+            return;
+
+        if (state.TrailerCount > player.BuiltSlots)
+        {
+            RecreateNetPlayerTruck(player);
+            return;
+        }
+
+        RemoveContainer(player);
+        player.BuiltTrailerCount = state.TrailerCount;
+        player.BuiltTrailerLivery = state.TrailerLivery;
+        player.BuiltTrailerCargo = state.TrailerCargoTypeId;
+
+        if (state.TrailerCount > 0) ApplyTrailerContainers(player.PlayerId, player, state);
+
+        App.Log.LogInfo($"({player.PlayerId}) Trailer now {state.TrailerCount} container(s) in the cab's {player.BuiltSlots} slot(s); the cab was kept.");
     }
 
     // ---------------------------------------------------------------------------------------
@@ -386,15 +473,7 @@ public class NetworkEventsComponent : MonoBehaviour
 
             App.Log.LogInfo($"Trailer update info for player {trailerDto.NetId}: TrailerCount=[{trailerDto.TrailerCount}], LiveryId='{trailerDto.LiveryId}', CargoTypeId='{trailerDto.CargoTypeId}'");
 
-            // The cab prefab differs per container count, so the truck has to be rebuilt — but
-            // not for an update that says what it was already built for.
-            if (player.TruckObj != null &&
-                player.BuiltTrailerCount == state.TrailerCount &&
-                player.BuiltTrailerLivery == state.TrailerLivery &&
-                player.BuiltTrailerCargo == state.TrailerCargoTypeId)
-                return;
-
-            RecreateNetPlayerTruck(player);
+            ReconcileTrailer(player, state);
         });
     }
 
@@ -678,6 +757,7 @@ public class NetworkEventsComponent : MonoBehaviour
                 {
                     TruckAppearanceSync.Apply(player.TruckObj, state.Livery, state.Appearance);
                     TruckStateSyncComponent.ApplyHeadlights(player.TruckObj, state.Headlights);
+                    ReconcileTrailer(player, state);
                 }
             }
 
@@ -711,6 +791,7 @@ public class NetworkEventsComponent : MonoBehaviour
 
             App.Log.LogInfo($"Own sector is now {sector}, re-checking {_remote.Count} known player(s)");
             FloatingOrigin.LogState("sector change");
+            GhostZones.Invalidate();
 
             foreach (var known in _remote)
                 ApplySectorVisibility(known.Key, known.Value.Sector);

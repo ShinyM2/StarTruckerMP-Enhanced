@@ -32,10 +32,23 @@ public class CbRadioPttComponent : MonoBehaviour
     private bool _dialogueReadFailed;
     private bool _heldWhileBusyLogged;
 
+    /// <summary>
+    /// The dialogue state is read a few times a second, not every frame: it is five calls into
+    /// the game and two marshalled lists each time, and a caller's line stays up for seconds.
+    /// </summary>
+    private const float DialogueReadSeconds = 0.1f;
+    private float _nextDialogueRead;
+
     private void Update()
     {
         TryBindCbRadio();
-        UpdateDialogueState();
+
+        if (Time.unscaledTime >= _nextDialogueRead)
+        {
+            _nextDialogueRead = Time.unscaledTime + DialogueReadSeconds;
+            UpdateDialogueState();
+        }
+
         UpdateCbPttState();
     }
 

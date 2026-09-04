@@ -55,6 +55,21 @@ internal static class OverlayManager
 
     #region Public API
 
+    /// <summary>False when the player switched the overlay off: nothing is launched and every message to it is dropped.</summary>
+    public static bool Enabled { get; private set; } = true;
+
+    /// <summary>
+    /// The overlay is not wanted this session. A second browser drawn over the game is the one
+    /// part of the mod that costs a machine something whether or not the player ever presses F2,
+    /// and on some it costs a stutter; the in-game page and the cab monitor carry the rest.
+    /// </summary>
+    public static void Disable()
+    {
+        Enabled = false;
+        _overlayUnavailable = true;
+        App.Log.LogInfo("[Overlay] Switched off in the settings; the F2 overlay is not started.");
+    }
+
     /// <summary>Locate, launch and connect to the overlay process.</summary>
     public static void Launch()
     {
