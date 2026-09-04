@@ -1,5 +1,4 @@
-﻿using Il2CppInterop.Runtime.InteropTypes.Arrays;
-using UnityEngine;
+﻿using UnityEngine;
 
 namespace StarTruckMP.Client;
 
@@ -25,10 +24,9 @@ public static class PlayerState
     public static string Name { get; set; } = "";
 
     public static string Sector { get; set; } = "";
+
+    /// <summary>The player's own truck, once a save is loaded. Game thread.</summary>
     public static GameObject Truck { get; set; }
-    public static GameObject Player { get; set; }
-    public static GameObject SpaceSuit { get; set; }
-    public static Material[] SpaceSuitMats { get; set; }
 
     #endregion
 }

@@ -31,9 +31,24 @@ internal static class SteamAuthHelper
     {
         try
         {
+            // Each sign-in supersedes the one before: a switch of server while the old one was
+            // still being retried must not leave two loops posting tickets.
+            var generation = Interlocked.Increment(ref _generation);
+
+            // Steam may not be up yet, or not at all. Ask again, but with a growing pause: at
+            // fifty milliseconds this loop was a busy wait for as long as Steam stayed away.
+            var wait = 50;
+            var explained = false;
             while (!Steamworks.SteamAPI.Init())
             {
-                Thread.Sleep(50);
+                if (!explained && wait >= 2000)
+                {
+                    explained = true;
+                    Log.LogWarning("[Auth] Steam is not answering; retrying every couple of seconds.");
+                }
+
+                Thread.Sleep(wait);
+                wait = Math.Min(wait * 2, 2000);
             }
 
             if (!Steamworks.SteamAPI.IsSteamRunning())
@@ -47,6 +62,9 @@ internal static class SteamAuthHelper
                 Log.LogWarning("[Auth] Steam user is not logged on, skipping Steam authentication.");
                 return;
             }
+
+            // Steam is up: presence and invites may use it from now on.
+            Invites.SteamReady = true;
 
             PlayerState.Name = Steamworks.SteamFriends.GetPersonaName() ?? string.Empty;
             Log.LogInfo($"[Auth] Steam persona name: {PlayerState.Name}");
@@ -76,7 +94,7 @@ internal static class SteamAuthHelper
 
             Log.LogInfo($"[Auth] Steam ticket obtained for SteamID={steamIdValue} ({ticketSize} bytes).");
 
-            Plugin.StartAttachedThread(() => Send(steamIdValue, ticketHex));
+            Plugin.StartAttachedThread(() => Send(steamIdValue, ticketHex, generation));
         }
         catch (Exception ex)
         {
@@ -99,12 +117,20 @@ internal static class SteamAuthHelper
     ///   2. Verify response.params.result == "OK".
     ///   3. Compare response.params.steamid against the posted steamId field.
     /// </summary>
-    private static void Send(ulong steamId, string ticketHex)
+    private static void Send(ulong steamId, string ticketHex, int generation)
     {
         // Retries live in the caller loop below: recursing here added a stack frame every
         // five seconds, so a server that stayed down long enough took the thread with it.
         while (!SendOnce(steamId, ticketHex))
+        {
             Thread.Sleep(5000);
+
+            if (generation != Volatile.Read(ref _generation))
+            {
+                Log.LogInfo("[Auth] A newer sign-in has started; this one stops.");
+                return;
+            }
+        }
     }
 
     /// <summary>Posts the ticket once. Returns false if the caller should try again.</summary>
@@ -207,6 +233,7 @@ internal static class SteamAuthHelper
         }
     }
 
+    private static int _generation;
     private static string _lastFailure;
     private static int _sameFailures;
     private static bool _traceLogged;

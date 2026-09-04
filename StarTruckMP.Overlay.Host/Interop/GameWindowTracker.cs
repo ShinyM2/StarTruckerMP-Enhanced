@@ -15,6 +15,10 @@ internal sealed class GameWindowTracker : IDisposable
     private bool _disposed;
     private GameWindowState _lastState;
 
+    /// <summary>Opened once: looking the process up by id thirty times a second was a fresh handle and a query each time.</summary>
+    private Process? _gameProcess;
+    private bool _gameProcessMissing;
+
     public GameWindowTracker(nint gameWindowHandle, int gameProcessId, IOverlayLogger logger)
     {
         _gameWindowHandle = gameWindowHandle;
@@ -45,12 +49,12 @@ internal sealed class GameWindowTracker : IDisposable
         if (_disposed)
             return;
 
-        if (_gameProcessId > 0)
+        if (_gameProcessId > 0 && !_gameProcessMissing)
         {
             try
             {
-                using var process = Process.GetProcessById(_gameProcessId);
-                if (process.HasExited)
+                _gameProcess ??= Process.GetProcessById(_gameProcessId);
+                if (_gameProcess.HasExited)
                 {
                     _logger.Warn("[Tracker] The game process has exited.");
                     GameExited?.Invoke(this, EventArgs.Empty);
@@ -60,6 +64,7 @@ internal sealed class GameWindowTracker : IDisposable
             }
             catch (ArgumentException)
             {
+                _gameProcessMissing = true;
                 _logger.Warn("[Tracker] The game process was not found; closing the overlay.");
                 GameExited?.Invoke(this, EventArgs.Empty);
                 Stop();
@@ -108,6 +113,8 @@ internal sealed class GameWindowTracker : IDisposable
 
         _disposed = true;
         _timer.Stop();
+        _gameProcess?.Dispose();
+        _gameProcess = null;
     }
 
     private bool TryGetTrackedWindowRect(nint hwnd, out Rect rect)

@@ -36,6 +36,12 @@ public sealed class PcmStreamPlayer
     private readonly int _clipSamples;
     private readonly int _samplesPerFrame;
 
+    /// <summary>Two seconds of nothing, made once: every stop used to allocate and marshal it afresh.</summary>
+    private static Il2CppStructArray<float> _silence;
+
+    private static Il2CppStructArray<float> Silence =>
+        _silence ??= new Il2CppStructArray<float>(new float[VoiceFormat.SampleRate * ClipSeconds * VoiceFormat.Channels]);
+
     private readonly ConcurrentQueue<float[]> _pending = new();
     private readonly Queue<float[]> _buffered = new();
     private int _bufferedOffset;
@@ -58,7 +64,7 @@ public sealed class PcmStreamPlayer
         _samplesPerFrame = VoiceFormat.SamplesPerFrame * VoiceFormat.Channels;
 
         _clip = AudioClip.Create(clipName, _clipSamples, VoiceFormat.Channels, VoiceFormat.SampleRate, false);
-        _clip.SetData(new Il2CppStructArray<float>(new float[_clipSamples * VoiceFormat.Channels]), 0);
+        _clip.SetData(Silence, 0);
 
         _source = host.AddComponent<AudioSource>();
         _source.playOnAwake = false;
@@ -134,7 +140,7 @@ public sealed class PcmStreamPlayer
         _playing = false;
 
         if (_clip != null)
-            _clip.SetData(new Il2CppStructArray<float>(new float[_clipSamples * VoiceFormat.Channels]), 0);
+            _clip.SetData(Silence, 0);
     }
 
     /// <summary>Removes the source and the clip from the host object.</summary>

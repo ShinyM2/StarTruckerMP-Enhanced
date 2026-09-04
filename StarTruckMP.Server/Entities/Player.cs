@@ -1,4 +1,5 @@
 ﻿using StarTruckMP.Server.Crypto;
+using StarTruckMP.Server.Server.Services;
 
 namespace StarTruckMP.Server.Entities;
 
@@ -32,16 +33,12 @@ public class Player(int id)
     /// <summary>True when the network handshake and key exchange are both complete.</summary>
     public bool EncryptionReady => Cipher is not null && HandshakeCompleted;
 
-    public StarTruckMP.Shared.Vector3 PlayerPosition { get; set; }
-    public StarTruckMP.Shared.Quaternion PlayerRotation { get; set; }
-    public StarTruckMP.Shared.Vector3 PlayerVelocity { get; set; }
-    public StarTruckMP.Shared.Vector3 PlayerAngVel { get; set; }
-
+    /// <summary>The cab as last reported, in world space, for the snapshot a late joiner gets.</summary>
     public StarTruckMP.Shared.Vector3 TruckPosition { get; set; }
     public StarTruckMP.Shared.Quaternion TruckRotation { get; set; }
     public StarTruckMP.Shared.Vector3 TruckVelocity { get; set; }
     public StarTruckMP.Shared.Vector3 TruckAngVel { get; set; }
-    
+
     public int TrailerCount { get; set; }
     public string TrailerLivery { get; set; } = string.Empty;
     public string TrailerCargoTypeId { get; set; } = string.Empty;
@@ -49,4 +46,16 @@ public class Player(int id)
     public bool Headlights { get; set; }
 
     public DateTime ConnectedAt { get; } = DateTime.UtcNow;
+
+    // How much of each kind of traffic one client may send. Movement is twenty-five a second
+    // by design, with a burst for the physics steps a game runs back to back after a hitch;
+    // voice is fifty frames a second; the rest is occasional.
+    public RateLimiter MovementRate { get; } = new(perSecond: 60, burst: 90);
+    public RateLimiter VoiceRate { get; } = new(perSecond: 75, burst: 150);
+    public RateLimiter ChatRate { get; } = new(perSecond: 1, burst: 5);
+    public RateLimiter StateRate { get; } = new(perSecond: 4, burst: 12);
+
+    /// <summary>Refusals since the last log line about them, so a flood is reported once a while rather than once a packet.</summary>
+    public int Refused { get; set; }
+    public long RefusedLoggedAt { get; set; }
 }

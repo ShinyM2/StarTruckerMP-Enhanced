@@ -1,40 +1,48 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using Microsoft.Extensions.Caching.Memory;
+using Il2CppInterop.Runtime.Attributes;
 using StarTruckMP.Client.Synchronization;
 using StarTruckMP.Client.UI;
 using StarTruckMP.Shared;
 using StarTruckMP.Shared.Cmd;
 using StarTruckMP.Shared.Dto;
+using StarTruckMP.Shared.Movement;
 using UnityEngine;
-using UnityEngine.AddressableAssets;
-using UnityEngine.SceneManagement;
-using Object = Il2CppSystem.Object;
 using Quaternion = UnityEngine.Quaternion;
-using SynchronizationContext = Il2CppSystem.Threading.SynchronizationContext;
 using Vector3 = UnityEngine.Vector3;
 
 namespace StarTruckMP.Client.Components;
 
+/// <summary>
+/// Turns what the server says about other players into trucks in the scene.
+///
+/// Network events arrive on the socket thread, which is not attached to the IL2CPP runtime and
+/// so may touch nothing of the game's. Everything but movement is therefore queued here and
+/// done in <see cref="Update"/>; movement is handed straight to the mover of the truck it is
+/// about, which keeps its own ordering and touches nothing of Unity's either.
+/// </summary>
 public class NetworkEventsComponent : MonoBehaviour
 {
     private bool _connected;
-    private SynchronizationContext _mainThreadContext;
+
+    /// <summary>Work for the game thread, in the order it was queued.</summary>
+    private readonly ConcurrentQueue<Action> _mainThread = new();
+
+    private void Post(Action work) => _mainThread.Enqueue(work);
 
     private void Awake()
     {
-        _mainThreadContext = SynchronizationContext.Current;
         DontDestroyOnLoad(gameObject);
 
         Network.OnConnected += HandleConnected;
         Network.OnDisconnected += HandleDisconnected;
         Network.OnPlayerDisconnected += HandlePlayerDisconnected;
+        Network.OnPlayerSnapshot += HandlePlayerSnapshot;
         Network.OnPlayerSectorUpdate += HandlePlayerSectorUpdate;
-        Network.OnPlayerPositionUpdate += HandlePlayerPositionUpdate;
+        Network.OnPlayerMovement += HandlePlayerMovement;
         Network.OnTruckLiveryUpdate += HandleTruckLiveryUpdate;
         Network.OnTrailerUpdate += HandleTrailerUpdate;
-        Network.OnPlayerNameUpdate += HandlePlayerNameUpdate;
         Network.OnPingsUpdate += HandlePings;
         Network.OnTruckStateUpdate += HandleTruckState;
         GameEventsComponent.ArrivedAtSector += HandleOwnSectorChanged;
@@ -43,13 +51,11 @@ public class NetworkEventsComponent : MonoBehaviour
         App.Log.LogInfo("NetworkEventsComponent Awake and subscribed to network events");
     }
 
-    private IMemoryCache _players = new MemoryCache(new MemoryCacheOptions());
-
     /// <summary>
     /// Everything the server has told us about each remote player, kept whether or not they
     /// are currently spawned. Updates arrive in any order and often before the player enters
     /// our sector, so without this the livery and trailer they already had were simply lost
-    /// and they showed up as a bare unpainted cab.
+    /// and they showed up as a bare unpainted cab. Game thread.
     /// </summary>
     private readonly Dictionary<int, RemoteState> _remote = new();
 
@@ -66,6 +72,11 @@ public class NetworkEventsComponent : MonoBehaviour
 
         /// <summary>Milliseconds as the server last measured them, -1 until it says.</summary>
         public int Ping = -1;
+
+        /// <summary>Where the server last saw the cab, and in which sector, so a spawn can start there.</summary>
+        public bool HasSeed;
+        public string SeedSector = string.Empty;
+        public BodyState Seed;
     }
 
     private RemoteState StateOf(int netId)
@@ -87,289 +98,53 @@ public class NetworkEventsComponent : MonoBehaviour
     public static GameObject RemoteTruck(int netId) =>
         _remoteTrucks.TryGetValue(netId, out var truck) && truck != null ? truck : null;
 
+    /// <summary>The players spawned in our sector. Read on the socket thread, written on the game thread.</summary>
+    private readonly ConcurrentDictionary<int, NetPlayer> _players = new();
+
     private class NetPlayer
     {
-        public int PlayerId { get; set; }
-        public string PlayerName { get; set; }
-        public GameObject TruckObj { get; set; }
-        public GameObject PlayerObj { get; set; }
-        public GameObject SuitObj { get; set; }
+        public int PlayerId;
+        public string PlayerName;
+        public GameObject TruckObj;
 
-        /// <summary>Trailer containers taken off the NPC cab and driven by their own position stream, by index in the train.</summary>
-        public Dictionary<int, GameObject> Trailers { get; } = new();
+        /// <summary>The trailer container taken off the NPC cab and driven by the movement stream.</summary>
+        public GameObject TrailerObj;
 
         /// <summary>
-        /// The movers, kept apart from the objects so a position can be handed to them from the
+        /// The movers, kept apart from the objects so a state can be handed to them from the
         /// network thread without touching Unity: fetched once here on the game thread.
         /// </summary>
         public volatile TruckControllerComponent TruckMover;
-        public ConcurrentDictionary<byte, TruckControllerComponent> TrailerMovers { get; } = new();
-    }
+        public volatile TruckControllerComponent TrailerMover;
 
-    private NetPlayer CreateNetPlayer(int netId)
-    {
-        var state = StateOf(netId);
-        var player = new NetPlayer
-        {
-            PlayerId = netId,
-            PlayerName = ResolveName(netId)
-        };
+        /// <summary>Counts the packets and feeds the movers; one per player for the life of the spawn.</summary>
+        public MovementReceiver Receiver;
 
-        var go = GameObject.Find("[Sector]");
-        var scene = go?.scene;
-        if (scene == null) App.Log.LogError($"({netId}) Could not find sector root object to get scene for player");
+        /// <summary>The container spawns asynchronously; the attempt to take it over is queued at most this often.</summary>
+        public volatile bool TrailerAttachQueued;
+        public long TrailerRetryAtTicks;
 
-        #region Truck setup
-
-        player.TruckObj = TruckFactory.CreatePlayerTruck(state.TrailerCount, Vector3.zero, Quaternion.identity);
-        if (player.TruckObj == null)
-        {
-            App.Log.LogError($"({netId}) Failed to create player truck object");
-        }
-        else
-        {
-            App.Log.LogInfo($"({netId}) Created player truck object");
-
-            var controller = player.TruckObj.GetComponent<TruckControllerComponent>();
-            if (controller != null) controller.NetId = netId;
-            player.TruckMover = controller;
-            _remoteTrucks[netId] = player.TruckObj;
-
-            ConfigureRemoteTruckPhysics(player.TruckObj);
-
-            AttachNameplate(player.TruckObj, player.PlayerName, netId);
-
-            // Replay the paint and cargo we were told about earlier; the truck prefab above was
-            // already picked for the right number of containers, so only the contents are left.
-            TruckAppearanceSync.Apply(player.TruckObj, state.Livery, state.Appearance);
-            ScheduleHeadlights(player.TruckObj, state.Headlights);
-
-            ApplyTrailerContainers(netId, player, state);
-        }
-
-        #endregion
-
-        #region Player setup
-
-        player.PlayerObj = new GameObject($"RemotePlayer-{netId}");
-        App.Log.LogInfo($"({netId}) Created player object");
-        if (scene != null)
-        {
-            SceneManager.MoveGameObjectToScene(player.PlayerObj, scene.Value);
-            App.Log.LogInfo($"({netId}) Moved player object to scene");
-        }
-        player.PlayerObj.transform.SetParent(null);
-
-        #endregion
-
-        #region Player suit setup
-
-        if (PlayerState.SpaceSuit == null)
-        {
-            App.Log.LogWarning($"({netId}) No space suit prefab known yet, the player on foot will be invisible");
-            App.Log.LogInfo($"Created NetPlayer for netId {netId}");
-            return player;
-        }
-
-        var suit = Instantiate(PlayerState.SpaceSuit, Vector3.zero, Quaternion.identity, player.PlayerObj.transform);
-        App.Log.LogInfo($"({netId}) Instantiated player suit");
-        player.SuitObj = suit;
-        var suitRenderer = suit.GetComponent<MeshRenderer>();
-        if (PlayerState.SpaceSuitMats != null && suitRenderer != null)
-            PlayerState.SpaceSuitMats.CopyTo(suitRenderer.materials, 0);
-        suit.active = true;
-        suit.name = $"ClientSuit-{netId}";
-        Destroy(suit.transform.GetComponent<SpaceSuitController>());
-        Destroy(suit.transform.GetComponent<CapsuleCollider>());
-        Destroy(suit.transform.GetComponent<OutlinableSetterUpper>());
-        Destroy(suit.transform.GetComponent<EPOOutline.Outlinable>());
-        Destroy(suit.transform.GetComponent<EPOOutline.TargetStateListener>());
-        Destroy(suit.transform.GetComponent<MaterialSwitcher>());
-        Destroy(suit.transform.GetComponent<InteractTarget>());
-        Destroy(suit.transform.GetComponent<DoorController>());
-        App.Log.LogInfo($"({netId}) Configured player suit");
-
-        #endregion
-
-        App.Log.LogInfo($"Created NetPlayer for netId {netId}");
-
-        return player;
-    }
-
-    private void RecreateNetPlayerTruck(int netId, int cargoCount)
-    {
-        if (!_players.TryGetValue(netId, out NetPlayer player))
-            return;
-
-        var currentPos = Vector3.zero;
-        var currentRot = Quaternion.identity;
-        var state = StateOf(netId);
-
-        if (player.TruckObj != null)
-        {
-            // Keep where it was; everything else is rebuilt from what the server told us.
-            player.TruckObj.transform.GetPositionAndRotation(out currentPos, out currentRot);
-            player.TruckObj.SetActive(false);
-            DestroyImmediate(player.TruckObj);
-        }
-
-        // The trailers were taken off the old cab and live on their own; the new cab brings new ones.
-        DestroyTrailers(player);
-
-        // recreate with same data
-        player.TruckObj = TruckFactory.CreatePlayerTruck(cargoCount, currentPos, currentRot);
-        if (player.TruckObj == null)
-        {
-            App.Log.LogError($"Failed to recreate truck for player {netId}");
-            return;
-        }
-
-        var rebuiltController = player.TruckObj.GetComponent<TruckControllerComponent>();
-        if (rebuiltController != null) rebuiltController.NetId = netId;
-        player.TruckMover = rebuiltController;
-        _remoteTrucks[netId] = player.TruckObj;
-
-        TruckAppearanceSync.Apply(player.TruckObj, state.Livery, state.Appearance);
-        ScheduleHeadlights(player.TruckObj, state.Headlights);
-        ConfigureRemoteTruckPhysics(player.TruckObj);
-        // The old truck carried the nameplate, so the rebuilt one needs its own.
-        AttachNameplate(player.TruckObj, player.PlayerName, netId);
-        App.Log.LogInfo($"Recreated truck for player {netId} with cargo count {cargoCount}");
-    }
-
-    private void HandleTruckLiveryUpdate(UpdateLiveryDto liveryDto)
-    {
-        _mainThreadContext.Post(new Action<Object>(_ =>
-        {
-            var state = StateOf(liveryDto.NetId);
-            state.Livery = liveryDto.Livery ?? string.Empty;
-            if (liveryDto.Appearance != null) state.Appearance = liveryDto.Appearance;
-
-            if (!_players.TryGetValue(liveryDto.NetId, out NetPlayer player)) return;
-            if (player.TruckObj == null) return;
-
-            TruckAppearanceSync.Apply(player.TruckObj, state.Livery, state.Appearance);
-        }), null);
-    }
-
-    /// <summary>What a packet is about: its Kind, or for an older sender the IsTruck flag.</summary>
-    private static byte KindOf(UpdatePositionDto dto) => dto.Kind != 0 ? dto.Kind : (byte)(dto.IsTruck ? 1 : 0);
-
-    /// <summary>
-    /// A movement packet, on the network thread the moment it lands. The trucks and trailers that
-    /// already have a mover take it straight away — the mover keeps its own ordering and touches
-    /// nothing of Unity's — so no frame is spent waiting for the game thread. Only what needs
-    /// Unity, a trailer that has to be set up first or the player on foot, is posted across.
-    /// </summary>
-    private void HandlePlayerPositionUpdate(UpdatePositionDto positionDto, double arrivedAt)
-    {
-        if (!_players.TryGetValue(positionDto.NetId, out NetPlayer player)) return;
-
-        var kind = KindOf(positionDto);
-
-        if (kind == 1)
-        {
-            var mover = player.TruckMover;
-            if (mover != null) mover.ApplyNetworkState(positionDto, arrivedAt);
-            return;
-        }
-
-        if (kind == 2 && player.TrailerMovers.TryGetValue(positionDto.Index, out var trailerMover))
-        {
-            trailerMover.ApplyNetworkState(positionDto, arrivedAt);
-            return;
-        }
-
-        _mainThreadContext.Post(new Action<Object>(_ =>
-        {
-            if (!_players.TryGetValue(positionDto.NetId, out NetPlayer current)) return;
-
-            if (kind == 2)
-            {
-                ApplyTrailerMove(positionDto.NetId, current, positionDto, arrivedAt);
-            }
-            else if (kind == 0 && current.PlayerObj != null)
-            {
-                current.PlayerObj.transform.SetPositionAndRotation(
-                    FloatingOrigin.ToScene(Vec(positionDto.Position)),
-                    Quat(positionDto.Rotation)
-                );
-                var rigid = current.PlayerObj.transform.GetComponent<Rigidbody>();
-                if (rigid != null)
-                {
-                    rigid.velocity = Vec(positionDto.Velocity);
-                    rigid.angularVelocity = Vec(positionDto.AngVel);
-                }
-            }
-        }), null);
+        /// <summary>What the current cab was built for, so an identical trailer update does not rebuild it.</summary>
+        public int BuiltTrailerCount;
+        public string BuiltTrailerLivery = string.Empty;
+        public string BuiltTrailerCargo = string.Empty;
     }
 
     /// <summary>
-    /// Moves a remote player's trailer where its owner's trailer is.
-    ///
-    /// The NPC cab carries its containers rigidly in slots; the owner's trailer swings on a real
-    /// joint. So the first time a trailer stream arrives, the slot's container is taken out of
-    /// the cab's hierarchy and given the same interpolating mover the cab has. The container is
-    /// spawned asynchronously by the game, so until it exists the packet is simply skipped.
+    /// Where a copy waits between being made and its first placement. Out of sight, rather than
+    /// at the scene origin: the origin is wherever the player is, and a truck that flashed up
+    /// there for a few frames read as one appearing on the bonnet.
     /// </summary>
-    private void ApplyTrailerMove(int netId, NetPlayer player, UpdatePositionDto dto, double arrivedAt)
-    {
-        if (player.TruckObj == null) return;
-
-        if (!player.Trailers.TryGetValue(dto.Index, out var trailer) || trailer == null)
-        {
-            var slots = player.TruckObj.GetComponentsInChildren<AIVehicleContainerSlot>(true);
-            if (slots == null || dto.Index >= slots.Length) return;
-
-            var container = slots[dto.Index].m_currentContainer;
-            if (container == null) return;
-
-            container.transform.SetParent(null, true);
-
-            var body = container.GetComponent<Rigidbody>();
-            if (body != null)
-            {
-                body.isKinematic = true;
-                body.interpolation = RigidbodyInterpolation.Interpolate;
-                body.detectCollisions = App.RemoteCollisions.Value;
-            }
-
-            var mover = container.GetComponent<TruckControllerComponent>() ?? container.AddComponent<TruckControllerComponent>();
-            mover.NetId = netId;
-
-            player.Trailers[dto.Index] = container;
-            player.TrailerMovers[dto.Index] = mover;
-            App.Log.LogInfo($"({netId}) Trailer {dto.Index} now follows its own position stream ({slots.Length} slot(s) on the cab).");
-            trailer = container;
-        }
-
-        var controller = trailer.GetComponent<TruckControllerComponent>();
-        controller?.ApplyNetworkState(dto, arrivedAt);
-    }
-
-    private static void DestroyTrailers(NetPlayer player)
-    {
-        foreach (var trailer in player.Trailers.Values)
-        {
-            if (trailer != null) Destroy(trailer);
-        }
-
-        player.Trailers.Clear();
-        player.TrailerMovers.Clear();
-    }
-
-    // Headlights are applied twice: at once, and again a second later when the light switchers
-    // have run their Start and made the glow material the second pass needs.
-    private readonly List<(float At, GameObject Truck, bool On)> _headlightsLater = new();
-
-    private void ScheduleHeadlights(GameObject truck, bool on)
-    {
-        TruckStateSyncComponent.ApplyHeadlights(truck, on);
-        _headlightsLater.Add((Time.unscaledTime + 1f, truck, on));
-    }
+    private static readonly Vector3 Parking = new(0f, -20000f, 0f);
 
     private void Update()
     {
+        while (_mainThread.TryDequeue(out var work))
+        {
+            try { work(); }
+            catch (Exception ex) { App.Log.LogError($"[Net] {ex}"); }
+        }
+
         LinkStats.Publish();
 
         if (_headlightsLater.Count == 0) return;
@@ -384,38 +159,243 @@ public class NetworkEventsComponent : MonoBehaviour
         }
     }
 
+    // ---------------------------------------------------------------------------------------
+    // Spawning
+    // ---------------------------------------------------------------------------------------
+
+    private NetPlayer CreateNetPlayer(int netId)
+    {
+        var state = StateOf(netId);
+        var player = new NetPlayer
+        {
+            PlayerId = netId,
+            PlayerName = ResolveName(netId),
+            Receiver = new MovementReceiver(netId)
+        };
+
+        BuildTruck(player, state, Parking, Quaternion.identity, previous: null);
+
+        if (player.TruckObj != null && state.HasSeed)
+        {
+            // World coordinates belong to a sector: the server's last sighting only helps when it
+            // was made where we are. Used once; a truck that comes back later has moved since.
+            if (state.SeedSector == PlayerState.Sector) player.TruckMover?.Seed(state.Seed);
+            state.HasSeed = false;
+        }
+
+        App.Log.LogInfo($"Created NetPlayer for netId {netId}");
+        return player;
+    }
+
+    /// <summary>Makes the cab for the player's current cargo and gives it everything a copy needs.</summary>
+    private void BuildTruck(NetPlayer player, RemoteState state, Vector3 position, Quaternion rotation, TruckControllerComponent previous)
+    {
+        player.TruckObj = TruckFactory.CreatePlayerTruck(state.TrailerCount, position, rotation);
+        player.BuiltTrailerCount = state.TrailerCount;
+        player.BuiltTrailerLivery = state.TrailerLivery;
+        player.BuiltTrailerCargo = state.TrailerCargoTypeId;
+
+        if (player.TruckObj == null)
+        {
+            App.Log.LogError($"({player.PlayerId}) Failed to create player truck object");
+            player.TruckMover = null;
+            return;
+        }
+
+        var controller = player.TruckObj.GetComponent<TruckControllerComponent>();
+        if (controller != null)
+        {
+            controller.NetId = player.PlayerId;
+            if (previous != null) controller.TakeOver(previous);
+        }
+
+        player.TruckMover = controller;
+        _remoteTrucks[player.PlayerId] = player.TruckObj;
+
+        ConfigureRemoteTruckPhysics(player.TruckObj);
+        AttachNameplate(player.TruckObj, player.PlayerName, player.PlayerId);
+
+        // Replay the paint and cargo we were told about earlier; the truck prefab above was
+        // already picked for the right number of containers, so only the contents are left.
+        TruckAppearanceSync.Apply(player.TruckObj, state.Livery, state.Appearance);
+        ScheduleHeadlights(player.TruckObj, state.Headlights);
+        ApplyTrailerContainers(player.PlayerId, player, state);
+
+        App.Log.LogInfo($"({player.PlayerId}) Built truck with {state.TrailerCount} container(s)");
+    }
+
+    private void RecreateNetPlayerTruck(NetPlayer player)
+    {
+        var position = Parking;
+        var rotation = Quaternion.identity;
+        var state = StateOf(player.PlayerId);
+        var previous = player.TruckMover;
+
+        if (player.TruckObj != null)
+        {
+            // Keep where it was; everything else is rebuilt from what the server told us.
+            player.TruckObj.transform.GetPositionAndRotation(out position, out rotation);
+            player.TruckObj.SetActive(false);
+            DestroyImmediate(player.TruckObj);
+        }
+
+        // The trailer was taken off the old cab and lives on its own; the new cab brings a new one.
+        DestroyTrailer(player);
+
+        BuildTruck(player, state, position, rotation, previous);
+    }
+
+    private void HandleTruckLiveryUpdate(UpdateLiveryDto liveryDto)
+    {
+        Post(() =>
+        {
+            var state = StateOf(liveryDto.NetId);
+            state.Livery = liveryDto.Livery ?? string.Empty;
+            if (liveryDto.Appearance != null) state.Appearance = liveryDto.Appearance;
+
+            if (!_players.TryGetValue(liveryDto.NetId, out var player)) return;
+            if (player.TruckObj == null) return;
+
+            TruckAppearanceSync.Apply(player.TruckObj, state.Livery, state.Appearance);
+        });
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Movement
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A movement packet, on the network thread the moment it lands. The movers that exist take
+    /// it straight away, so no frame is spent waiting for the game thread. A trailer that has
+    /// no mover yet — its container spawns asynchronously — is queued for the game thread to
+    /// set up, at most a few times a second.
+    /// </summary>
+    [HideFromIl2Cpp]
+    private void HandlePlayerMovement(MovementUpdate update)
+    {
+        if (!_players.TryGetValue(update.NetId, out var player)) return;
+
+        var trailer = player.TrailerMover;
+        player.Receiver.Take(update, player.TruckMover, trailer);
+
+        if (update.Current.HasTrailer && trailer == null && !player.TrailerAttachQueued &&
+            Environment.TickCount64 >= player.TrailerRetryAtTicks)
+        {
+            player.TrailerAttachQueued = true;
+            Post(() => AttachTrailer(player));
+        }
+    }
+
+    /// <summary>
+    /// Takes the container out of the NPC cab's slot and gives it the same interpolating mover the
+    /// cab has: the cab carries its containers rigidly, the owner's trailer swings on a joint.
+    /// The container is spawned asynchronously by the game, so until it exists this is retried.
+    /// </summary>
+    private void AttachTrailer(NetPlayer player)
+    {
+        try
+        {
+            if (player.TruckObj == null || player.TrailerMover != null) return;
+
+            var slots = player.TruckObj.GetComponentsInChildren<AIVehicleContainerSlot>(true);
+            var container = slots != null && slots.Length > 0 ? slots[0].m_currentContainer : null;
+            if (container == null)
+            {
+                player.TrailerRetryAtTicks = Environment.TickCount64 + 250;
+                return;
+            }
+
+            container.transform.SetParent(null, true);
+
+            var body = container.GetComponent<Rigidbody>();
+            if (body != null)
+            {
+                body.isKinematic = true;
+                body.interpolation = RigidbodyInterpolation.None;
+                body.detectCollisions = App.RemoteCollisions.Value;
+            }
+
+            if (!App.RemoteCollisions.Value)
+            {
+                foreach (var collider in container.GetComponentsInChildren<Collider>(true))
+                    DestroyImmediate(collider);
+            }
+
+            TruckFactory.QuietenAi(container.gameObject);
+
+            var mover = container.GetComponent<TruckControllerComponent>() ?? container.AddComponent<TruckControllerComponent>();
+            mover.NetId = player.PlayerId;
+
+            player.TrailerObj = container.gameObject;
+            player.TrailerMover = mover;
+            App.Log.LogInfo($"({player.PlayerId}) Trailer now follows its own body in the movement stream ({slots.Length} slot(s) on the cab).");
+        }
+        finally
+        {
+            player.TrailerAttachQueued = false;
+        }
+    }
+
+    private static void DestroyTrailer(NetPlayer player)
+    {
+        player.TrailerMover = null;
+        if (player.TrailerObj != null) Destroy(player.TrailerObj);
+        player.TrailerObj = null;
+        player.TrailerRetryAtTicks = 0;
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Headlights
+    // ---------------------------------------------------------------------------------------
+
+    // Headlights are applied twice: at once, and again a second later when the light switchers
+    // have run their Start and made the glow material the second pass needs.
+    private readonly List<(float At, GameObject Truck, bool On)> _headlightsLater = new();
+
+    private void ScheduleHeadlights(GameObject truck, bool on)
+    {
+        TruckStateSyncComponent.ApplyHeadlights(truck, on);
+        _headlightsLater.Add((Time.unscaledTime + 1f, truck, on));
+    }
+
     private void HandleTruckState(TruckStateDto state)
     {
-        _mainThreadContext.Post(new Action<Object>(_ =>
+        Post(() =>
         {
             StateOf(state.NetId).Headlights = state.Headlights;
 
-            if (_players.TryGetValue(state.NetId, out NetPlayer player) && player.TruckObj != null)
+            if (_players.TryGetValue(state.NetId, out var player) && player.TruckObj != null)
                 TruckStateSyncComponent.ApplyHeadlights(player.TruckObj, state.Headlights);
-        }), null);
+        });
     }
 
-    private static Vector3 Vec(global::StarTruckMP.Shared.Vector3 vec) => new(vec.X, vec.Y, vec.Z);
-
-    private static Quaternion Quat(global::StarTruckMP.Shared.Quaternion quat) => new(quat.X, quat.Y, quat.Z, quat.W);
+    // ---------------------------------------------------------------------------------------
+    // Trailers
+    // ---------------------------------------------------------------------------------------
 
     private void HandleTrailerUpdate(UpdateTrailerDto trailerDto)
     {
-        _mainThreadContext.Post(new Action<Object>(_ =>
+        Post(() =>
         {
             var state = StateOf(trailerDto.NetId);
             state.TrailerCount = trailerDto.TrailerCount;
             state.TrailerLivery = trailerDto.LiveryId ?? string.Empty;
             state.TrailerCargoTypeId = trailerDto.CargoTypeId ?? string.Empty;
 
-            if (!_players.TryGetValue(trailerDto.NetId, out NetPlayer player)) return;
+            if (!_players.TryGetValue(trailerDto.NetId, out var player)) return;
 
             App.Log.LogInfo($"Trailer update info for player {trailerDto.NetId}: TrailerCount=[{trailerDto.TrailerCount}], LiveryId='{trailerDto.LiveryId}', CargoTypeId='{trailerDto.CargoTypeId}'");
 
-            // The cab prefab differs per container count, so the truck has to be rebuilt.
-            RecreateNetPlayerTruck(trailerDto.NetId, trailerDto.TrailerCount);
-            ApplyTrailerContainers(trailerDto.NetId, player, state);
-        }), null);
+            // The cab prefab differs per container count, so the truck has to be rebuilt — but
+            // not for an update that says what it was already built for.
+            if (player.TruckObj != null &&
+                player.BuiltTrailerCount == state.TrailerCount &&
+                player.BuiltTrailerLivery == state.TrailerLivery &&
+                player.BuiltTrailerCargo == state.TrailerCargoTypeId)
+                return;
+
+            RecreateNetPlayerTruck(player);
+        });
     }
 
     /// <summary>
@@ -481,6 +461,10 @@ public class NetworkEventsComponent : MonoBehaviour
         }
     }
 
+    // ---------------------------------------------------------------------------------------
+    // Names, physics, nameplates
+    // ---------------------------------------------------------------------------------------
+
     /// <summary>
     /// Name to show for a player: whatever they reported at handshake, falling back to their
     /// net id when the platform gave them no name.
@@ -528,25 +512,6 @@ public class NetworkEventsComponent : MonoBehaviour
         truck.AddComponent<GhostComponent>();
     }
 
-    private void HandlePlayerNameUpdate(int netId, string name)
-    {
-        _mainThreadContext.Post(new Action<Object>(_ =>
-        {
-            StateOf(netId).Name = name ?? string.Empty;
-
-            // The player may already be spawned — a snapshot delivers the name and the
-            // sector separately, and either can arrive first.
-            if (_players.TryGetValue(netId, out NetPlayer player))
-            {
-                player.PlayerName = ResolveName(netId);
-                var nameplate = player.TruckObj?.GetComponent<NameplateComponent>();
-                nameplate?.SetName(player.PlayerName);
-            }
-
-            PushOverlayRoster();
-        }), null);
-    }
-
     /// <summary>
     /// The overlay page announces itself once its scripts are running. Roster pushes sent
     /// before that point can be missed, so resend the current one whenever it (re)loads.
@@ -556,8 +521,12 @@ public class NetworkEventsComponent : MonoBehaviour
         if (type != "overlayLoaded") return;
 
         // Raised on the pipe reader thread — the roster dictionaries belong to the game thread.
-        _mainThreadContext.Post(new Action<Object>(_ => PushOverlayRoster()), null);
+        Post(PushOverlayRoster);
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Roster
+    // ---------------------------------------------------------------------------------------
 
     /// <summary>
     /// Sends the current roster to the CEF overlay: who is connected, what they are called
@@ -643,31 +612,88 @@ public class NetworkEventsComponent : MonoBehaviour
     /// </summary>
     private void HandlePings(PingsDto pings)
     {
-        _mainThreadContext.Post(new Action<Object>(_ =>
+        Post(() =>
         {
             foreach (var entry in pings.Players)
             {
                 if (entry.NetId == Network.NetId) _ownPing = entry.Ping;
-                else if (_remote.ContainsKey(entry.NetId)) _remote[entry.NetId].Ping = entry.Ping;
+                else if (_remote.TryGetValue(entry.NetId, out var state)) state.Ping = entry.Ping;
             }
 
             PushOverlayRoster();
-        }), null);
+        });
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Who is where
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Everything the server knows about a player, as one unit: on our own connect for everyone
+    /// already there, and for each player who joins after. Applied whole before the sector is
+    /// looked at, so a truck spawns once, with its paint and its trailer, rather than bare and
+    /// then rebuilt as each piece arrives.
+    /// </summary>
+    [HideFromIl2Cpp]
+    private void HandlePlayerSnapshot(PlayerSnapshotDto snapshot)
+    {
+        Post(() =>
+        {
+            var state = StateOf(snapshot.NetId);
+            state.Name = snapshot.Name ?? string.Empty;
+            state.Livery = snapshot.Livery ?? string.Empty;
+            if (snapshot.Appearance != null) state.Appearance = snapshot.Appearance;
+            state.Headlights = snapshot.Headlights;
+            state.TrailerCount = snapshot.TrailersCount;
+            state.TrailerLivery = snapshot.TrailerLivery ?? string.Empty;
+            state.TrailerCargoTypeId = snapshot.TrailerCargoTypeId ?? string.Empty;
+            state.Sector = snapshot.Sector ?? "none";
+
+            // A player who has not sent a position yet comes with an all-zero rotation, which no
+            // real reading has; their cab waits out of sight for its first packet instead.
+            var truck = snapshot.Truck;
+            var sighted = truck != null &&
+                          (truck.Rotation.X != 0f || truck.Rotation.Y != 0f || truck.Rotation.Z != 0f || truck.Rotation.W != 0f);
+            if (sighted)
+            {
+                state.HasSeed = true;
+                state.SeedSector = state.Sector;
+                state.Seed = new BodyState
+                {
+                    Position = truck.Position,
+                    Rotation = truck.Rotation,
+                    Velocity = truck.Velocity,
+                    AngVel = truck.AngVel
+                };
+            }
+
+            // Already spawned — a snapshot for a player we know is the server telling us again.
+            if (_players.TryGetValue(snapshot.NetId, out var player))
+            {
+                player.PlayerName = ResolveName(snapshot.NetId);
+                var nameplate = player.TruckObj != null ? player.TruckObj.GetComponent<NameplateComponent>() : null;
+                nameplate?.SetName(player.PlayerName);
+
+                if (player.TruckObj != null)
+                {
+                    TruckAppearanceSync.Apply(player.TruckObj, state.Livery, state.Appearance);
+                    TruckStateSyncComponent.ApplyHeadlights(player.TruckObj, state.Headlights);
+                }
+            }
+
+            ApplySectorVisibility(snapshot.NetId, state.Sector);
+            PushOverlayRoster();
+        });
     }
 
     private void HandlePlayerSectorUpdate(UpdateSectorDto sectorDto)
     {
-        _mainThreadContext.Post(new Action<Object>(_ =>
+        Post(() =>
         {
             StateOf(sectorDto.NetId).Sector = sectorDto.Sector;
-
-            lock (sectorDto.NetId.ToString())
-            {
-                ApplySectorVisibility(sectorDto.NetId, sectorDto.Sector);
-            }
-
+            ApplySectorVisibility(sectorDto.NetId, sectorDto.Sector);
             PushOverlayRoster();
-        }), null);
+        });
     }
 
     /// <summary>
@@ -678,7 +704,7 @@ public class NetworkEventsComponent : MonoBehaviour
     /// </summary>
     private void HandleOwnSectorChanged(string sector)
     {
-        _mainThreadContext.Post(new Action<Object>(_ =>
+        Post(() =>
         {
             if (_connected)
                 Network.SendServerMessage(new UpdateSectorCmd { Sector = sector }, PacketType.UpdateSector);
@@ -690,7 +716,7 @@ public class NetworkEventsComponent : MonoBehaviour
                 ApplySectorVisibility(known.Key, known.Value.Sector);
 
             PushOverlayRoster();
-        }), null);
+        });
     }
 
     /// <summary>
@@ -701,13 +727,13 @@ public class NetworkEventsComponent : MonoBehaviour
     private void ApplySectorVisibility(int netId, string sector)
     {
         var sameSector = sector == PlayerState.Sector;
-        var spawned = _players.TryGetValue(netId, out NetPlayer _);
+        var spawned = _players.ContainsKey(netId);
 
         if (sameSector == spawned) return;
 
         if (sameSector)
         {
-            _players.Set(netId, CreateNetPlayer(netId));
+            _players[netId] = CreateNetPlayer(netId);
             App.Log.LogInfo($"Added player {netId} to cache for sector {sector}");
         }
         else
@@ -717,29 +743,32 @@ public class NetworkEventsComponent : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Takes a player's copy out of the scene for good. Destroyed, not merely hidden: a hidden
+    /// truck kept its nameplate, its ghost materials and its audio sources, and one was left
+    /// behind every time a player changed sector.
+    /// </summary>
     private void DespawnPlayer(int netId)
     {
-        if (!_players.TryGetValue(netId, out NetPlayer player)) return;
-        if (player.TruckObj != null) player.TruckObj.SetActive(false);
-        if (player.PlayerObj != null) player.PlayerObj.SetActive(false);
-        DestroyTrailers(player);
-        _players.Remove(netId);
+        if (!_players.TryRemove(netId, out var player)) return;
+
+        player.TruckMover = null;
+        DestroyTrailer(player);
+        if (player.TruckObj != null) Destroy(player.TruckObj);
+        player.TruckObj = null;
+
         _remoteTrucks.Remove(netId);
         RemoteTimeline.Forget(netId);
     }
 
     private void HandlePlayerDisconnected(int netId)
     {
-        _mainThreadContext.Post(new Action<Object>(_ =>
+        Post(() =>
         {
-            lock (netId.ToString())
-            {
-                _remote.Remove(netId);
-                DespawnPlayer(netId);
-            }
-
+            _remote.Remove(netId);
+            DespawnPlayer(netId);
             PushOverlayRoster();
-        }), null);
+        });
     }
 
     private void HandleDisconnected()
@@ -748,14 +777,14 @@ public class NetworkEventsComponent : MonoBehaviour
 
         // The connection now retries by itself, and the roster we come back to may be a
         // different one. Drop everybody rather than leaving frozen trucks from the old session.
-        _mainThreadContext.Post(new Action<Object>(_ =>
+        Post(() =>
         {
             foreach (var netId in new List<int>(_remote.Keys))
                 DespawnPlayer(netId);
 
             _remote.Clear();
             PushOverlayRoster();
-        }), null);
+        });
     }
 
     private void HandleConnected(int netId)
@@ -772,11 +801,11 @@ public class NetworkEventsComponent : MonoBehaviour
         Network.OnConnected -= HandleConnected;
         Network.OnDisconnected -= HandleDisconnected;
         Network.OnPlayerDisconnected -= HandlePlayerDisconnected;
+        Network.OnPlayerSnapshot -= HandlePlayerSnapshot;
         Network.OnPlayerSectorUpdate -= HandlePlayerSectorUpdate;
-        Network.OnPlayerPositionUpdate -= HandlePlayerPositionUpdate;
+        Network.OnPlayerMovement -= HandlePlayerMovement;
         Network.OnTruckLiveryUpdate -= HandleTruckLiveryUpdate;
         Network.OnTrailerUpdate -= HandleTrailerUpdate;
-        Network.OnPlayerNameUpdate -= HandlePlayerNameUpdate;
         Network.OnPingsUpdate -= HandlePings;
         Network.OnTruckStateUpdate -= HandleTruckState;
         GameEventsComponent.ArrivedAtSector -= HandleOwnSectorChanged;

@@ -10,7 +10,7 @@ public class PlayerSnapshotDto
     public string Sector { get; set; } = "none";
     public string Livery { get; set; } = string.Empty;
     public TruckAppearance? Appearance { get; set; }
-    public TransformDto Player { get; set; } = new();
+    /// <summary>Where the cab last was, in world space, so a late joiner can place it before its first packet.</summary>
     public TransformDto Truck { get; set; } = new();
     public int TrailersCount { get; set; }
     public string TrailerLivery { get; set; } = string.Empty;

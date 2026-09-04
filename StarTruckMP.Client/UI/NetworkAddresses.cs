@@ -17,6 +17,10 @@ internal static class NetworkAddresses
     private static string _public;
     private static bool _lookupRunning;
 
+    /// <summary>When a failed lookup may be tried again; the invite rows ask for the address a few times a second.</summary>
+    private static long _retryAt;
+    private const long RetryMs = 60_000;
+
     private static string _local;
     private static float _localReadAt = float.NegativeInfinity;
 
@@ -95,6 +99,7 @@ internal static class NetworkAddresses
     public static void Refresh()
     {
         if (_public != null || _lookupRunning) return;
+        if (Environment.TickCount64 < _retryAt) return;
         _lookupRunning = true;
 
         Plugin.StartAttachedThread(() =>
@@ -112,7 +117,8 @@ internal static class NetworkAddresses
             }
             catch (Exception ex)
             {
-                App.Log.LogWarning($"[Addresses] Public address lookup failed: {ex.Message}");
+                App.Log.LogWarning($"[Addresses] Public address lookup failed: {ex.Message}; trying again in a minute.");
+                _retryAt = Environment.TickCount64 + RetryMs;
             }
             finally
             {

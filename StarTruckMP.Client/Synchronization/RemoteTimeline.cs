@@ -66,6 +66,15 @@ internal sealed class RemoteTimeline
     /// <summary>The delay may grow at once but shrinks no faster than this, so a quiet spell does not oscillate it.</summary>
     private const double DelayShrinkPerSecond = 0.04;
 
+    /// <summary>
+    /// When the sender's clock falls this far behind the fastest trip on record, and stays there
+    /// for a few packets, the record is wrong rather than the packets late. A physics clock does
+    /// that after a long hitch or a pause: it never catches the time up. Waiting for the ten-second
+    /// window to forget the old maximum meant that many seconds of a truck drawn ahead of its data.
+    /// </summary>
+    private const double OffsetDropSeconds = 0.25;
+    private const int OffsetDropPackets = 8;
+
     private readonly object _lock = new();
 
     private readonly WindowMax _offsets = new(OffsetBucketSeconds, OffsetBuckets);
@@ -74,6 +83,8 @@ internal sealed class RemoteTimeline
 
     private bool _known;
     private double _offset;
+    private int _belowOffset;
+    private bool _rebased;
 
     private bool _playing;
     private double _playback;
@@ -103,6 +114,25 @@ internal sealed class RemoteTimeline
         lock (_lock)
         {
             var raw = sentAt - arrivedAt;
+
+            if (_known && raw < _offset - OffsetDropSeconds)
+            {
+                if (++_belowOffset >= OffsetDropPackets)
+                {
+                    // The sender's clock has moved on us. Start the record afresh from this
+                    // packet and let playback jump to the new footing once, rather than drift
+                    // there over seconds or, worse, wait for the old maximum to expire.
+                    _offsets.Clear();
+                    _lateness.Clear();
+                    _belowOffset = 0;
+                    _rebased = true;
+                }
+            }
+            else
+            {
+                _belowOffset = 0;
+            }
+
             _offsets.Add(arrivedAt, raw);
             _offset = _offsets.Max(arrivedAt);
             _known = true;
@@ -141,9 +171,10 @@ internal sealed class RemoteTimeline
 
             var target = now + _offset - _delay;
 
-            if (!_playing || Math.Abs(target - _playback) > SnapError)
+            if (!_playing || _rebased || Math.Abs(target - _playback) > SnapError)
             {
                 _playing = true;
+                _rebased = false;
                 _playback = target;
                 _rate = 1.0;
                 return;
@@ -201,6 +232,11 @@ internal sealed class RemoteTimeline
             {
                 _max[slot] = value;
             }
+        }
+
+        public void Clear()
+        {
+            for (var i = 0; i < _ids.Length; i++) _ids[i] = long.MinValue;
         }
 
         public double Max(double now)

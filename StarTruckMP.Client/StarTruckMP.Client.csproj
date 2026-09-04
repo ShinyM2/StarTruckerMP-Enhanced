@@ -4,7 +4,7 @@
         <TargetFramework>net6.0</TargetFramework>
         <AssemblyName>StarTruckMP.Client</AssemblyName>
         <Product>StarTruckMP</Product>
-        <Version>1.4.0</Version>
+        <Version>1.7.0</Version>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <LangVersion>latest</LangVersion>
         <RestoreAdditionalProjectSources>
@@ -31,7 +31,6 @@
         <PackageReference Include="Concentus" Version="2.2.2" />
         <PackageReference Include="Concentus.Native" Version="1.5.2" />
         <PackageReference Include="Concentus.Native.NetCore" Version="1.5.2" />
-        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.7" />
         <PackageReference Include="NWaves" Version="0.9.6" />
         <PackageReference Include="YellowDogMan.RRNoise.NET" Version="0.1.9" />
     </ItemGroup>

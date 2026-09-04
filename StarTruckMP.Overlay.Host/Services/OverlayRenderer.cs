@@ -23,29 +23,35 @@ internal sealed class OverlayRenderer
 
     public void Render(BrowserFrameReadyEventArgs frame)
     {
-        if (frame.Width <= 0 || frame.Height <= 0)
-            return;
-
-        if (_bitmap == null || frame.Width != _lastWidth || frame.Height != _lastHeight)
+        try
         {
-            _bitmap?.Dispose();
-            _bitmap = new WriteableBitmap(
-                new PixelSize(frame.Width, frame.Height),
-                new Vector(96, 96),
-                PixelFormat.Bgra8888,
-                AlphaFormat.Unpremul);
+            if (frame.Width <= 0 || frame.Height <= 0)
+                return;
 
-            _lastWidth = frame.Width;
-            _lastHeight = frame.Height;
+            if (_bitmap == null || frame.Width != _lastWidth || frame.Height != _lastHeight)
+            {
+                _bitmap?.Dispose();
+                _bitmap = new WriteableBitmap(
+                    new PixelSize(frame.Width, frame.Height),
+                    new Vector(96, 96),
+                    PixelFormat.Bgra8888,
+                    AlphaFormat.Unpremul);
+
+                _lastWidth = frame.Width;
+                _lastHeight = frame.Height;
+                _window.FrameBitmap = _bitmap;
+                _logger.Info($"[Renderer] Created surface {frame.Width}x{frame.Height}");
+            }
+
+            using var locked = _bitmap.Lock();
+            Marshal.Copy(frame.Buffer, 0, locked.Address, Math.Min(frame.Length, locked.RowBytes * locked.Size.Height));
             _window.FrameBitmap = _bitmap;
-            _logger.Info($"[Renderer] Created surface {frame.Width}x{frame.Height}");
+            _window.NotifyFrameUpdated();
         }
-
-        using var locked = _bitmap.Lock();
-        Marshal.Copy(frame.Buffer, 0, locked.Address, Math.Min(frame.Buffer.Length, frame.Height * frame.Stride));
-        _window.FrameBitmap = _bitmap;
-        _window.NotifyFrameUpdated();
-
+        finally
+        {
+            frame.Release();
+        }
     }
 }
 

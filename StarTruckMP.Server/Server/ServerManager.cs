@@ -11,6 +11,7 @@ using StarTruckMP.Server.Server.Services;
 using StarTruckMP.Shared;
 using StarTruckMP.Shared.Cmd;
 using StarTruckMP.Shared.Dto;
+using StarTruckMP.Shared.Movement;
 
 namespace StarTruckMP.Server.Server;
 
@@ -171,6 +172,13 @@ public class ServerManager
         if (_logger.IsEnabled(LogLevel.Debug))
             _logger.LogDebug("Connection request from {EndPoint}", request.RemoteEndPoint);
 
+        if (_server.ConnectedPeersCount >= _settings.MaxPlayers)
+        {
+            request.Reject();
+            _logger.LogWarning("Rejected connection from {EndPoint}: the server is full ({MaxPlayers}).", request.RemoteEndPoint, _settings.MaxPlayers);
+            return;
+        }
+
         var raw = request.Data.GetRemainingBytesSpan();
         if (!PacketSerializer.TrySplitPacket<ProtocolAuthenticateCmd>(raw, out var packetType, out var authenticate))
         {
@@ -289,34 +297,84 @@ public class ServerManager
             return;
         }
 
-        switch (packet.PacketType)
+        // Everything a client sends is relayed to others, so a client that floods is a client
+        // that floods everyone. Over the limit its packets are simply not relayed.
+        var limiter = packet.PacketType switch
         {
-            case PacketType.UpdatePosition:
-                HandleUpdatePosition(packet.PeerId, player, packet.Raw, packet.Channel, packet.DeliveryMethod);
-                break;
-            case PacketType.Voice:
-                HandleVoice(packet.PeerId, player, packet.Raw);
-                break;
-            case PacketType.UpdateSector:
-                HandleUpdateSector(packet.PeerId, player, packet.Raw);
-                break;
-            case PacketType.Chat:
-                HandleChat(packet.PeerId, player, packet.Raw);
-                break;
-            case PacketType.UpdateLivery:
-                HandleUpdateLivery(packet.PeerId, player, packet.Raw);
-                break;
-            case PacketType.UpdateTrailer:
-                HandleUpdateTrailer(packet.PeerId, player, packet.Raw);
-                break;
-            case PacketType.TruckState:
-                HandleTruckState(packet.PeerId, player, packet.Raw);
-                break;
-            default:
-                _logger.LogWarning("Unhandled packet type {PacketType} from peer {PeerId}", packet.PacketType, packet.PeerId);
-                break;
+            PacketType.UpdatePosition => player.MovementRate,
+            PacketType.Voice => player.VoiceRate,
+            PacketType.Chat => player.ChatRate,
+            _ => player.StateRate
+        };
+
+        if (!limiter.Allow())
+        {
+            NoteRefused(packet.PeerId, player, packet.PacketType);
+            return;
+        }
+
+        try
+        {
+            switch (packet.PacketType)
+            {
+                case PacketType.UpdatePosition:
+                    HandleMovement(packet.PeerId, player, packet.Raw, packet.Channel, packet.DeliveryMethod);
+                    break;
+                case PacketType.Voice:
+                    HandleVoice(packet.PeerId, player, packet.Raw);
+                    break;
+                case PacketType.UpdateSector:
+                    HandleUpdateSector(packet.PeerId, player, packet.Raw);
+                    break;
+                case PacketType.Chat:
+                    HandleChat(packet.PeerId, player, packet.Raw);
+                    break;
+                case PacketType.UpdateLivery:
+                    HandleUpdateLivery(packet.PeerId, player, packet.Raw);
+                    break;
+                case PacketType.UpdateTrailer:
+                    HandleUpdateTrailer(packet.PeerId, player, packet.Raw);
+                    break;
+                case PacketType.TruckState:
+                    HandleTruckState(packet.PeerId, player, packet.Raw);
+                    break;
+                default:
+                    _logger.LogWarning("Unhandled packet type {PacketType} from peer {PeerId}", packet.PacketType, packet.PeerId);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            // A packet that does not parse is one client's problem, not the relay loop's.
+            if (_logger.IsEnabled(LogLevel.Warning))
+                _logger.LogWarning("Dropped a malformed {PacketType} packet from peer {PeerId}: {Message}", packet.PacketType, packet.PeerId, ex.Message);
         }
     }
+
+    /// <summary>One line per few seconds about a client over its limit, never one per packet.</summary>
+    private void NoteRefused(int peerId, Player player, PacketType type)
+    {
+        player.Refused++;
+        var now = Environment.TickCount64;
+        if (now - player.RefusedLoggedAt < 5000) return;
+
+        player.RefusedLoggedAt = now;
+        _logger.LogWarning("Peer {PeerId} is over its rate limit; {Count} packet(s) not relayed, last {PacketType}", peerId, player.Refused, type);
+        player.Refused = 0;
+    }
+
+    /// <summary>A client-supplied string cut down to something safe to store and relay.</summary>
+    private static string Bound(string? value, int max)
+    {
+        if (string.IsNullOrEmpty(value)) return string.Empty;
+        return value.Length <= max ? value : value[..max];
+    }
+
+    private const int MaxIdLength = 128;
+    private const int MaxSectorLength = 64;
+    private const int MaxLabelLength = 32;
+    private const int MaxColours = 16;
+    private const int MaxVoiceFrameBytes = 1500;
 
     /// <summary>Opens an EncryptedPayload frame in place: the real type and body replace the frame.</summary>
     private bool TryOpen(ref IncomingPacketWorkItem packet)
@@ -348,6 +406,8 @@ public class ServerManager
 
     private void HandleVoice(int packetPeerId, Player player, byte[] packetRaw)
     {
+        if (packetRaw.Length == 0 || packetRaw.Length > MaxVoiceFrameBytes) return;
+
         var dto = new VoiceDto { NetId = packetPeerId, OpusData = packetRaw };
         QueueSendToAllExcept(dto.Serialize(PacketType.Voice), packetPeerId, VoiceChannel, DeliveryMethod.Unreliable);
     }
@@ -452,13 +512,6 @@ public class ServerManager
             Sector = player.Sector,
             Livery = player.Livery,
             Appearance = player.Appearance,
-            Player = new TransformDto
-            {
-                Position = player.PlayerPosition,
-                Rotation = player.PlayerRotation,
-                Velocity = player.PlayerVelocity,
-                AngVel = player.PlayerAngVel
-            },
             Truck = new TransformDto
             {
                 Position = player.TruckPosition,
@@ -606,57 +659,35 @@ public class ServerManager
         return null;
     }
 
-    private void HandleUpdatePosition(int peerId, Player player, byte[] raw, byte channel, DeliveryMethod deliveryMethod)
+    /// <summary>
+    /// A movement packet: the cab is remembered for the snapshot a late joiner gets, and the
+    /// client's bytes go out behind the sender's net id exactly as they came. Nothing is
+    /// re-serialised, and a packet that does not parse is dropped here rather than relayed.
+    /// </summary>
+    private void HandleMovement(int peerId, Player player, byte[] raw, byte channel, DeliveryMethod deliveryMethod)
     {
-        var positionData = PacketSerializer.Deserialize<UpdatePositionCmd>(raw);
+        // Parsed whole, not just the head: a packet the receivers would reject is not worth
+        // relaying to a sector of them, each of which would log it.
+        Span<MovementEntry> history = stackalloc MovementEntry[MovementCodec.MaxHistory];
+        if (!MovementCodec.TryRead(raw, out var current, history, out _))
+        {
+            NoteRefused(peerId, player, PacketType.UpdatePosition);
+            return;
+        }
 
         // A trailer's position is relayed, not remembered: a late joiner rebuilds the train from
         // the trailer update and the stream that follows.
-        if (positionData.Kind == 2)
+        if (current.HasCab)
         {
+            player.TruckPosition = current.Cab.Position;
+            player.TruckRotation = current.Cab.Rotation;
+            player.TruckVelocity = current.Cab.Velocity;
+            player.TruckAngVel = current.Cab.AngVel;
         }
-        else if (positionData.IsTruck)
-        {
-            player.TruckPosition = positionData.Position;
-            player.TruckRotation = positionData.Rotation;
-            player.TruckVelocity = positionData.Velocity;
-            player.TruckAngVel = positionData.AngVel;
-
-            if (positionData.InSeat)
-            {
-                player.PlayerPosition = positionData.Position;
-                player.PlayerRotation = positionData.Rotation;
-                player.PlayerVelocity = positionData.Velocity;
-                player.PlayerAngVel = positionData.AngVel;
-            }
-        }
-        else
-        {
-            player.PlayerPosition = positionData.Position;
-            player.PlayerRotation = positionData.Rotation;
-            player.PlayerVelocity = positionData.Velocity;
-            player.PlayerAngVel = positionData.AngVel;
-        }
-
-        var updateData = new UpdatePositionDto
-        {
-            NetId = peerId,
-            Position = positionData.Position,
-            Rotation = positionData.Rotation,
-            Velocity = positionData.Velocity,
-            AngVel = positionData.AngVel,
-            IsTruck = positionData.IsTruck,
-            InSeat = positionData.InSeat,
-            Seq = positionData.Seq,
-            SentAt = positionData.SentAt,
-            Kind = positionData.Kind,
-            Index = positionData.Index,
-            History = positionData.History
-        };
 
         // Only players sharing this sector can see the sender, so there is no point paying for
         // the encryption and bandwidth of shipping their movement to everyone else.
-        QueueSendToSectorExcept(updateData.Serialize(PacketType.UpdatePosition), peerId, player.Sector, channel, deliveryMethod);
+        QueueSendToSectorExcept(MovementCodec.WriteRelayed(PacketType.UpdatePosition, peerId, raw), peerId, player.Sector, channel, deliveryMethod);
     }
 
     /// <summary>
@@ -695,7 +726,7 @@ public class ServerManager
     private void HandleUpdateSector(int peerId, Player player, byte[] raw)
     {
         var sectorData = PacketSerializer.Deserialize<UpdateSectorCmd>(raw);
-        player.Sector = string.IsNullOrWhiteSpace(sectorData.Sector) ? "none" : sectorData.Sector;
+        player.Sector = string.IsNullOrWhiteSpace(sectorData.Sector) ? "none" : Bound(sectorData.Sector, MaxSectorLength);
 
         var update = new UpdateSectorDto { NetId = peerId, Sector = player.Sector };
         QueueSendReliableToAllExcept(update.Serialize(PacketType.UpdateSector), peerId);
@@ -707,8 +738,8 @@ public class ServerManager
     private void HandleUpdateLivery(int peerId, Player player, byte[] raw)
     {
         var liveryData = PacketSerializer.Deserialize<UpdateLiveryCmd>(raw);
-        player.Livery = liveryData.Livery;
-        player.Appearance = liveryData.Appearance;
+        player.Livery = Bound(liveryData.Livery, MaxIdLength);
+        player.Appearance = BoundAppearance(liveryData.Appearance);
 
         var update = new UpdateLiveryDto { NetId = peerId, Livery = player.Livery, Appearance = player.Appearance };
         QueueSendReliableToAllExcept(update.Serialize(PacketType.UpdateLivery), peerId);
@@ -720,21 +751,44 @@ public class ServerManager
     private void HandleUpdateTrailer(int packetPeerId, Player player, byte[] packetRaw)
     {
         var trailerData = PacketSerializer.Deserialize<UpdateTrailerCmd>(packetRaw);
-        player.TrailerCount = trailerData.TrailerCount;
-        player.TrailerLivery = trailerData.LiveryId;
-        player.TrailerCargoTypeId = trailerData.CargoTypeId;
+        player.TrailerCount = Math.Clamp(trailerData.TrailerCount, 0, 8);
+        player.TrailerLivery = Bound(trailerData.LiveryId, MaxIdLength);
+        player.TrailerCargoTypeId = Bound(trailerData.CargoTypeId, MaxIdLength);
 
         var update = new UpdateTrailerDto
         {
             NetId = packetPeerId,
-            TrailerCount = trailerData.TrailerCount,
-            LiveryId = trailerData.LiveryId,
-            CargoTypeId = trailerData.CargoTypeId
+            TrailerCount = player.TrailerCount,
+            LiveryId = player.TrailerLivery,
+            CargoTypeId = player.TrailerCargoTypeId
         };
         QueueSendReliableToAllExcept(update.Serialize(PacketType.UpdateTrailer), packetPeerId);
 
         if (_logger.IsEnabled(LogLevel.Trace))
             _logger.LogTrace("Peer {peerId} updated trailer, count {count} with livery {livery}", packetPeerId, trailerData.TrailerCount, trailerData.LiveryId);
+    }
+
+    /// <summary>The look of a truck with every id cut to a sane length; it is stored for the session and relayed to everyone.</summary>
+    private static TruckAppearance? BoundAppearance(TruckAppearance? a)
+    {
+        if (a is null) return null;
+
+        return new TruckAppearance
+        {
+            Livery = Bound(a.Livery, MaxIdLength),
+            BaseMaterial = Bound(a.BaseMaterial, MaxIdLength),
+            Colors = a.Colors is { Length: > MaxColours } ? a.Colors[..MaxColours] : a.Colors ?? [],
+            Exhaust = Bound(a.Exhaust, MaxIdLength),
+            Grill = Bound(a.Grill, MaxIdLength),
+            Ornament = Bound(a.Ornament, MaxIdLength),
+            Sensors = Bound(a.Sensors, MaxIdLength),
+            LicensePlate = Bound(a.LicensePlate, MaxIdLength),
+            LicensePlateLabel = Bound(a.LicensePlateLabel, MaxLabelLength),
+            WindowDecal = Bound(a.WindowDecal, MaxIdLength),
+            MaglockTopper = Bound(a.MaglockTopper, MaxIdLength),
+            Damage = float.IsFinite(a.Damage) ? Math.Clamp(a.Damage, 0f, 1f) : 0f,
+            Dirt = float.IsFinite(a.Dirt) ? Math.Clamp(a.Dirt, 0f, 1f) : 0f
+        };
     }
 
     private void QueueSendReliableToAllExcept(byte[] payload, int exceptPeerId)

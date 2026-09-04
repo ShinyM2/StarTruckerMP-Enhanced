@@ -81,6 +81,11 @@ public class MainMenuScreen_Patch
 
         button.isInteractable = true;
 
+        // Left alone, the entry goes into its Disabled animation state — the label faded to
+        // nothing — every time it is switched on again, and only the cursor passing over it
+        // wakes it up. Ours is always available, so it never wants that state.
+        button.disableOnEnable = false;
+
         // RemoveAllListeners only drops listeners added at runtime. The Options button's real
         // action is a persistent call baked into the prefab, which survived the clone and kept
         // opening the settings screen underneath our own; those have to be switched off by index.

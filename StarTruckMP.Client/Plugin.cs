@@ -52,7 +52,6 @@ public class Plugin : BasePlugin
         Network.SetupConnection();
         
         Harmony.CreateAndPatchAll(typeof(ClientHooks));
-        Harmony.CreateAndPatchAll(typeof(AIVehicleTruck_Patch));
         Harmony.CreateAndPatchAll(typeof(AIVehicleDef_Patch));
         Harmony.CreateAndPatchAll(typeof(MainMenuScreen_Patch));
         Harmony.CreateAndPatchAll(typeof(MonitorChannelSwitcher_Patch));
@@ -111,6 +110,7 @@ public class Plugin : BasePlugin
 
         // Delegate to the isolated helper so the CLR never JIT-compiles Steamworks
         // types on platforms where the assembly is absent (e.g. Xbox Game Pass).
+        App.SteamAvailable = true;
         App.ReAuthenticate = () => StartAttachedThread(SteamAuthHelper.Run);
         StartAttachedThread(SteamAuthHelper.Run);
     }

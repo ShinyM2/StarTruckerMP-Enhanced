@@ -63,15 +63,17 @@ public class MultiplayerUiComponent : MonoBehaviour
 
         MonitorPanel.Tick();
         KeepRunning();
+        Invites.Tick();
 
         // The native page shows live state, and Esc backs out of it like the game's own screens.
-        if (MultiplayerScreen.IsOpen)
-        {
-            // Escape closes a text box first; only with none open does it back out of the page.
-            var typing = MultiplayerScreen.IsTyping;
-            MultiplayerScreen.Tick();
-            if (!typing && Input.GetKeyDown(KeyCode.Escape)) MultiplayerScreen.Back();
-        }
+        // It ticks while closed as well: for a moment after closing it is still putting the
+        // game's own menu entries back the way it found them.
+        var open = MultiplayerScreen.IsOpen;
+
+        // Escape closes a text box first; only with none open does it back out of the page.
+        var typing = open && MultiplayerScreen.IsTyping;
+        MultiplayerScreen.Tick();
+        if (open && !typing && Input.GetKeyDown(KeyCode.Escape)) MultiplayerScreen.Back();
 
         // Let the menu grey out its Connect button and show the real state without polling.
         var connected = Network.NetId != -1;
@@ -107,7 +109,10 @@ public class MultiplayerUiComponent : MonoBehaviour
     private static void HandleArrivedInWorld(string sector) =>
         OverlayManager.PostMessage("hud", new { inWorld = true });
 
-    private void HandleChatReceived(ChatDto chat)
+    /// <summary>On the socket thread: the chat lists belong to the game thread, so the line waits for Update.</summary>
+    private void HandleChatReceived(ChatDto chat) => _mainThreadWork.Enqueue(() => AppendChat(chat));
+
+    private void AppendChat(ChatDto chat)
     {
         var line = new ChatLine
         {
@@ -169,8 +174,9 @@ public class MultiplayerUiComponent : MonoBehaviour
                     // A host plays on their own machine, so point the client at it.
                     if (HostControl.IsHosting && App.ServerAddress.Value != "127.0.0.1")
                     {
-                        App.ServerAddress.Value = "127.0.0.1";
-                        Network.Reconnect();
+                        Network.SwitchServer("127.0.0.1", App.ServerPort.Value);
+                        ServerStatus.Reset();
+                        MultiplayerScreen.AddressChanged();
                     }
 
                     PushStatus();
@@ -211,16 +217,18 @@ public class MultiplayerUiComponent : MonoBehaviour
         if (settings == null) return;
 
         var addressChanged = false;
+        var newAddress = App.ServerAddress.Value;
+        var newPort = App.ServerPort.Value;
 
         if (!string.IsNullOrWhiteSpace(settings.ServerAddress) && settings.ServerAddress != App.ServerAddress.Value)
         {
-            App.ServerAddress.Value = settings.ServerAddress.Trim();
+            newAddress = settings.ServerAddress.Trim();
             addressChanged = true;
         }
 
         if (!string.IsNullOrWhiteSpace(settings.ServerPort) && settings.ServerPort != App.ServerPort.Value)
         {
-            App.ServerPort.Value = settings.ServerPort.Trim();
+            newPort = settings.ServerPort.Trim();
             addressChanged = true;
         }
 
@@ -232,6 +240,9 @@ public class MultiplayerUiComponent : MonoBehaviour
 
         if (settings.RemoteCollisions.HasValue)
             App.RemoteCollisions.Value = settings.RemoteCollisions.Value;
+
+        if (settings.GhostMode.HasValue)
+            App.GhostMode.Value = settings.GhostMode.Value;
 
         if (settings.MicrophoneDevice != null && settings.MicrophoneDevice != (App.MicrophoneDeviceName.Value ?? string.Empty))
             Audio.VoiceInputComponent.SelectDevice(settings.MicrophoneDevice);
@@ -266,7 +277,11 @@ public class MultiplayerUiComponent : MonoBehaviour
         if (addressChanged)
         {
             PushNotice(Strings.Get("notice.addresssaved"));
-            Network.Reconnect();
+
+            // The sign-in belongs to the old server; SwitchServer redoes it for the new one.
+            Network.SwitchServer(newAddress, newPort);
+            ServerStatus.Reset();
+            MultiplayerScreen.AddressChanged();
         }
         else
         {
@@ -285,6 +300,11 @@ public class MultiplayerUiComponent : MonoBehaviour
         IgnoreSslValidation = App.IgnoreSslValidation.Value,
         ShowNameplates = App.ShowNameplates.Value,
         RemoteCollisions = App.RemoteCollisions.Value,
+        GhostMode = App.GhostMode.Value,
+
+        // Read-only here: rebinding needs a key press, which the game's own page reads and a
+        // browser overlay cannot.
+        ChatKey = MonitorPanel.KeyName(App.ChatKey.Value),
         MicrophoneDevice = App.MicrophoneDeviceName.Value ?? string.Empty,
         MicrophoneDevices = Audio.VoiceInputComponent.Devices(),
         MicrophoneGain = App.MicrophoneGain.Value,
@@ -346,6 +366,7 @@ public class MultiplayerUiComponent : MonoBehaviour
         public bool? IgnoreSslValidation { get; set; }
         public bool? ShowNameplates { get; set; }
         public bool? RemoteCollisions { get; set; }
+        public bool? GhostMode { get; set; }
         public string MicrophoneDevice { get; set; }
         public float? MicrophoneGain { get; set; }
         public bool? NoiseSuppression { get; set; }
@@ -364,6 +385,11 @@ public class MultiplayerUiComponent : MonoBehaviour
         public bool IgnoreSslValidation { get; set; }
         public bool ShowNameplates { get; set; }
         public bool RemoteCollisions { get; set; }
+        public bool GhostMode { get; set; }
+
+        /// <summary>The chat key's name, shown but not changeable from the overlay.</summary>
+        public string ChatKey { get; set; }
+
         public string MicrophoneDevice { get; set; }
         public string[] MicrophoneDevices { get; set; }
         public float MicrophoneGain { get; set; }

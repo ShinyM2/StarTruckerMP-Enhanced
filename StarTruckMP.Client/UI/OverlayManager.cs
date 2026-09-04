@@ -1,5 +1,6 @@
 ﻿#nullable enable
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
@@ -37,7 +38,6 @@ internal static class OverlayManager
     private static Process? _overlayProcess;
     private static CancellationTokenSource? _gamePipeCts;
     private static volatile bool _interactiveMode;
-    private static volatile bool _overlayReady;
 
     #region Events
 
@@ -67,6 +67,7 @@ internal static class OverlayManager
             var exe = ResolveOverlayExe();
             if (exe == null)
             {
+                _overlayUnavailable = true;
                 App.Log.LogWarning("[Overlay] StarTruckMP.Overlay.exe not found. Searched:");
                 App.Log.LogWarning($"[Overlay]   {Path.Combine(Path.GetDirectoryName(typeof(OverlayManager).Assembly.Location) ?? "", "StarTruckMP.Overlay.exe")}");
                 App.Log.LogWarning($"[Overlay]   {Path.Combine(Path.GetDirectoryName(typeof(OverlayManager).Assembly.Location) ?? "", "overlay", "StarTruckMP.Overlay.exe")}");
@@ -95,6 +96,7 @@ internal static class OverlayManager
                 _overlayProcess = Process.Start(psi);
                 if (_overlayProcess == null)
                 {
+                    _overlayUnavailable = true;
                     App.Log.LogError("[Overlay] Process.Start returned null — the OS refused to start the process.");
                     return;
                 }
@@ -122,6 +124,7 @@ internal static class OverlayManager
             }
             catch (Exception ex)
             {
+                _overlayUnavailable = true;
                 App.Log.LogError($"[Overlay] Failed to start process: {ex.Message}");
             }
         });
@@ -244,46 +247,90 @@ internal static class OverlayManager
 
     private static void SendCommand(string command) => SendCommands(command);
 
+    /// <summary>Commands waiting for the writer, each batch to be written as one piece.</summary>
+    private static readonly BlockingCollection<string[]> _outbox = new();
+    private static readonly object _writerLock = new();
+    private static bool _writerStarted;
+
+    /// <summary>Set when the overlay could not be found or started; nothing will ever read the pipe.</summary>
+    private static volatile bool _overlayUnavailable;
+
+    /// <summary>
+    /// Queues commands for the one writer thread. Every send used to open its own pipe on its
+    /// own thread, so two commands sent back to back could arrive in either order and each cost
+    /// a thread and a connection; one writer keeps the connection and the order.
+    /// </summary>
     private static void SendCommands(params string[] commands)
     {
-        Plugin.StartAttachedThread(() =>
+        if (_overlayUnavailable) return;
+
+        lock (_writerLock)
         {
-            // CEF needs a couple of seconds to boot before the overlay opens its pipe,
-            // so the first commands (TOKEN/NAVIGATE, sent as soon as auth returns) lose
-            // the race and the overlay is left sitting on about:blank. Keep retrying
-            // until it answers — but only during that startup window: once the overlay
-            // has accepted a command, or if it never started, fail on the first attempt
-            // instead of parking a thread on every later send.
-            var deadline = Environment.TickCount64 + 30_000;
-            Exception? last = null;
+            if (!_writerStarted)
+            {
+                _writerStarted = true;
+                Plugin.StartAttachedThread(WriterLoop);
+            }
+        }
+
+        _outbox.Add(commands);
+    }
+
+    private static void WriterLoop()
+    {
+        NamedPipeClientStream? pipe = null;
+        StreamWriter? writer = null;
+        var startedAt = Environment.TickCount64;
+        var lastFailureLog = 0L;
+
+        foreach (var batch in _outbox.GetConsumingEnumerable())
+        {
+            // CEF needs a couple of seconds to boot before the overlay opens its pipe, so the
+            // first commands (TOKEN/NAVIGATE, sent as soon as auth returns) would lose the race
+            // and leave the overlay on about:blank. Keep trying while the overlay is still
+            // expected; give the batch up once it plainly is not coming.
+            var attemptDeadline = Environment.TickCount64 + 60_000;
 
             while (true)
             {
                 try
                 {
-                    using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.Out);
-                    pipe.Connect(timeout: 2000);
-                    using var writer = new StreamWriter(pipe, Encoding.UTF8, bufferSize: 1024, leaveOpen: false);
-                    writer.AutoFlush = true;
-                    foreach (var cmd in commands)
+                    if (writer == null)
+                    {
+                        pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.Out);
+                        pipe.Connect(timeout: 2000);
+                        writer = new StreamWriter(pipe, Encoding.UTF8, bufferSize: 1024, leaveOpen: false) { AutoFlush = true };
+                    }
+
+                    foreach (var cmd in batch)
                         writer.WriteLine(cmd);
-                    _overlayReady = true;
-                    return;
+                    break;
                 }
                 catch (Exception ex)
                 {
-                    last = ex;
+                    try { writer?.Dispose(); } catch { /* the pipe is what failed */ }
+                    try { pipe?.Dispose(); } catch { /* the pipe is what failed */ }
+                    writer = null;
+                    pipe = null;
+
+                    var gone = _overlayUnavailable || _overlayProcess is { HasExited: true };
+                    var startupOver = Environment.TickCount64 - startedAt > 90_000 && _overlayProcess is null;
+
+                    if (gone || startupOver || Environment.TickCount64 >= attemptDeadline)
+                    {
+                        if (Environment.TickCount64 - lastFailureLog > 30_000)
+                        {
+                            lastFailureLog = Environment.TickCount64;
+                            App.Log.LogWarning($"[Overlay] IPC send failed: {ex.Message}");
+                        }
+
+                        break;
+                    }
+
+                    Thread.Sleep(250);
                 }
-
-                if (_overlayReady || _overlayProcess is null or { HasExited: true } ||
-                    Environment.TickCount64 >= deadline)
-                    break;
-
-                Thread.Sleep(250);
             }
-
-            App.Log.LogWarning($"[Overlay] IPC send failed: {last?.Message}");
-        });
+        }
     }
 
     #endregion

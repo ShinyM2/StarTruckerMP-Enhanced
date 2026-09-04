@@ -75,6 +75,9 @@ public class PauseScreen_Patch
         click.AddListener(new Action(Open));
         button.isInteractable = true;
 
+        // Never let it come back from a page change in its faded Disabled state.
+        button.disableOnEnable = false;
+
         // The page builds itself into this column, from this very entry.
         MultiplayerScreen.Prepare(parent, button);
 

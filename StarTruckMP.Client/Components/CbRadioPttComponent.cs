@@ -74,11 +74,11 @@ public class CbRadioPttComponent : MonoBehaviour
     {
         var panels = 0;
         var responses = 0;
-        string dialogueId = null;
+        RadioChatState chat = null;
 
         try
         {
-            var chat = RadioChatState.instance;
+            chat = RadioChatState.instance;
             if (chat != null)
             {
                 var ids = chat.availableResponseIds;
@@ -87,8 +87,6 @@ public class CbRadioPttComponent : MonoBehaviour
                 var view = chat.dialogueView;
                 var currentPanels = view != null ? view.currentPanels : null;
                 panels = currentPanels != null ? currentPanels.Count : 0;
-
-                dialogueId = chat.currentDialogueId;
             }
         }
         catch (Exception ex)
@@ -104,6 +102,12 @@ public class CbRadioPttComponent : MonoBehaviour
         if (busy == IsDialogueBusy) return;
 
         IsDialogueBusy = busy;
+
+        // The dialogue id is a string marshalled out of the game; read only for this line, not every frame.
+        string dialogueId = null;
+        try { dialogueId = chat != null ? chat.currentDialogueId : null; }
+        catch (Exception) { }
+
         App.Log.LogInfo($"[CB Radio] Game dialogue {(busy ? "took" : "released")} the radio (panels={panels}, responses={responses}, dialogue='{dialogueId}')");
     }
 

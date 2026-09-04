@@ -28,6 +28,9 @@ public static class App
     public static ConfigEntry<KeyCode> ChatKey;
     public static ConfigEntry<bool> GhostMode;
 
+    /// <summary>Steamworks was found next to the game at startup, so Steam sign-in and invites are on.</summary>
+    public static bool SteamAvailable;
+
     public static void Configure(ConfigFile config)
     {
         ServerAddress = config.Bind("Connection", "ServerAddress", "127.0.0.1", "StarTruckMP server address");
@@ -46,7 +49,7 @@ public static class App
         NoPauseInMultiplayer = config.Bind("Multiplayer", "NoPauseInMultiplayer", true, "Keep the world running while a menu, the map or a popup is open and when the window loses focus, for as long as you are on a server. A paused player stands still for everyone else and then leaps.");
         ShowNameplates = config.Bind("Multiplayer", "ShowNameplates", true, "Show other players' names above their trucks.");
         RemoteCollisions = config.Bind("Multiplayer", "RemoteCollisions", false, "Let other players' trucks collide with you. Off by default: with any latency the collision happens where the truck is not.");
-        MovementRedundancy = config.Bind("Multiplayer", "MovementRedundancy", 2, "How many of the previous states each movement packet repeats (0-3), so a packet the network loses costs nothing. Each one adds about 70 bytes to a packet; 2 covers the usual loss, 0 saves bandwidth on a metered link.");
+        MovementRedundancy = config.Bind("Multiplayer", "MovementRedundancy", 2, "How many of the previous states each movement packet repeats (0-3), so a packet the network loses costs nothing. Each one adds about 35 bytes to a packet, twice that with a trailer; 2 covers the usual loss, 0 saves bandwidth on a metered link.");
         GhostMode = config.Bind("Multiplayer", "GhostMode", true, "Fade other players' trucks out when they are in the way at a warp gate or a docking bay. Your own truck is never touched.");
         ChatKey = config.Bind("Multiplayer", "ChatKey", KeyCode.Return, "The key that opens the chat line on the cab monitor. Rebindable from the multiplayer page; keep it off the game's own bindings.");
     }

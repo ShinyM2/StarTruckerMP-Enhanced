@@ -1,4 +1,5 @@
-﻿using System.Collections.Concurrent;
+﻿using System.Buffers;
+using System.Collections.Concurrent;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -12,7 +13,7 @@ public sealed class CefOverlayBrowser : IDisposable
 {
     private const int ReadyCheckAttempts = 20;
     private static readonly TimeSpan ReadyCheckDelay = TimeSpan.FromMilliseconds(100);
-    private const int RedrawBurstCount = 6;
+    private const int RedrawBurstCount = 3;
     private static readonly TimeSpan RedrawBurstDelay = TimeSpan.FromMilliseconds(50);
 
     private readonly object _syncRoot = new();
@@ -243,10 +244,14 @@ public sealed class CefOverlayBrowser : IDisposable
         _logger.Info($"[BrowserConsole] {e.Source}:{e.Line} {e.Message}");
     }
 
+    /// <summary>
+    /// Every paint is a whole screen of pixels. Rented from the pool and returned by the renderer
+    /// once drawn, rather than a fresh eight-megabyte array per frame for the collector to chase.
+    /// </summary>
     private void OnBrowserPaint(object? sender, OnPaintEventArgs e)
     {
         var length = e.Width * e.Height * 4;
-        var copy = GC.AllocateUninitializedArray<byte>(length);
+        var copy = ArrayPool<byte>.Shared.Rent(length);
         Marshal.Copy(e.BufferHandle, copy, 0, length);
         FrameReady?.Invoke(this, new BrowserFrameReadyEventArgs(copy, e.Width, e.Height, e.Width * 4));
     }

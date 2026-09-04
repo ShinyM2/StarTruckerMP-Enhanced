@@ -69,7 +69,7 @@ To test, delete `<game>\BepInEx\plugins\StarTruckMP` and copy `artifacts\client`
 
 - Wire types live in `StarTruckMP.Shared`. Changing one changes the protocol; client and server are deployed together. `[MessagePackObject(true)]` types are keyed by name, so adding a field is tolerant in both directions.
 - The client runs under IL2CPP. New `MonoBehaviour`s need an `(IntPtr ptr) : base(ptr)` constructor and `ClassInjector.RegisterTypeInIl2Cpp<T>()` in `Plugin.cs`.
-- Anything touching Unity objects runs on the game thread: post it through `_mainThreadContext.Post(...)` as the existing handlers do. Network callbacks arrive on other threads.
+- Anything touching Unity objects runs on the game thread. Network callbacks arrive on LiteNetLib's socket thread, which is **not attached to IL2CPP**: a handler there may do managed work only (movement and voice do), and everything else goes into the component's `ConcurrentQueue<Action>` to be run from `Update()`, as `NetworkEventsComponent.Post` does. Do not call `Il2CppSystem.Threading.SynchronizationContext.Post` from a network callback; converting the delegate allocates an IL2CPP object on the wrong thread.
 - Steamworks types are touched only inside `Authentication/SteamAuthHelper`, behind an assembly-presence check.
 - Every string a player sees goes through `UI/Strings.cs`, which holds it in all eleven languages the game ships (en, ru, de, fr, es, pt-br, pl, it, zh-cn, zh-hant; es-419 reads es). Add a key with every column filled rather than an inline literal; the overlay receives the `overlay.*` keys from the same table.
 - Nothing developer-only ships: no in-game code runner, object inspector or test pages. Dev tooling belongs under `#if DEBUG` or outside the repo.

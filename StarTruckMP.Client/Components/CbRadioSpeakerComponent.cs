@@ -107,6 +107,7 @@ public class CbRadioSpeakerComponent : MonoBehaviour
         List<Sender> senders;
         lock (_sendersLock)
         {
+            if (_senders.Count == 0) return;
             senders = new List<Sender>(_senders.Values);
         }
 
@@ -164,7 +165,10 @@ public class CbRadioSpeakerComponent : MonoBehaviour
     private void FollowTruck(Sender sender)
     {
         var truck = App.HearNearbyRadios.Value ? NetworkEventsComponent.RemoteTruck(sender.NetId) : null;
-        if (truck == sender.TruckHost) return;
+
+        // Compared by reference on purpose: Unity's own equality calls a destroyed host equal to
+        // null, and a player whose truck was just destroyed would never get their clip released.
+        if (ReferenceEquals(truck, sender.TruckHost)) return;
 
         sender.TruckPlayer?.Dispose();
         sender.TruckPlayer = null;

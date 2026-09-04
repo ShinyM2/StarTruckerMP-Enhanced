@@ -67,6 +67,27 @@ public class GhostComponent : MonoBehaviour
         // The renderers may already be gone when the truck is torn down; nothing to put back.
         try { Apply(false); }
         catch (Exception) { }
+
+        // The translucent copies are assets of our own making and outlive the truck unless
+        // destroyed here: one set per truck that ever came near a gate, for the whole session.
+        if (_ghost == null) return;
+
+        try
+        {
+            foreach (var materials in _ghost)
+            {
+                if (materials == null) continue;
+                foreach (var material in materials)
+                {
+                    if (material != null) Destroy(material);
+                }
+            }
+        }
+        catch (Exception) { }
+        finally
+        {
+            _ghost = null;
+        }
     }
 
     private bool ShouldGhost()

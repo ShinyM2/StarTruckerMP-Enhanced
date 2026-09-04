@@ -12,6 +12,8 @@
 		ignoreSslValidation: boolean;
 		showNameplates: boolean;
 		remoteCollisions: boolean;
+		ghostMode: boolean;
+		chatKey: string;
 		microphoneDevice: string;
 		microphoneDevices: string[];
 		microphoneGain: number;
@@ -169,6 +171,18 @@
 							<input bind:value={portDraft} placeholder="7777" spellcheck="false" />
 						</label>
 						<button class="primary" onclick={saveConnection}>{tr('overlay.saveconnect')}</button>
+
+						<!-- A connection setting, so it lives with the connection rather than among the rest. -->
+						{#if settings}
+							<label class="check">
+								<input
+									type="checkbox"
+									checked={settings.ignoreSslValidation}
+									onchange={(e) => toggle('ignoreSslValidation', e.currentTarget.checked)}
+								/>
+								<span>{tr('overlay.set.ssl')}<small>{tr('overlay.set.ssl.hint')}</small></span>
+							</label>
+						{/if}
 					</div>
 
 					<dl class="facts">
@@ -215,7 +229,14 @@
 						<span>{tr('overlay.chat.sectoronly')}</span>
 					</label>
 				{:else if settings}
+					<!--
+						The same three groups, in the same order, as the pages of the in-game menu:
+						other players, radio and chat, the mod itself. Nothing is offered twice, and
+						a setting is looked for in the same place in either window.
+					-->
 					<div class="rows">
+						<h2 class="group">{tr('overlay.set.group.players')}</h2>
+
 						<label class="check">
 							<input
 								type="checkbox"
@@ -237,29 +258,13 @@
 						<label class="check">
 							<input
 								type="checkbox"
-								checked={settings.ignoreSslValidation}
-								onchange={(e) => toggle('ignoreSslValidation', e.currentTarget.checked)}
+								checked={settings.ghostMode}
+								onchange={(e) => toggle('ghostMode', e.currentTarget.checked)}
 							/>
-							<span>{tr('overlay.set.ssl')}<small>{tr('overlay.set.ssl.hint')}</small></span>
+							<span>{tr('overlay.set.ghost')}<small>{tr('overlay.set.ghost.hint')}</small></span>
 						</label>
 
-						<label class="check">
-							<input
-								type="checkbox"
-								checked={settings.noPauseInMultiplayer}
-								onchange={(e) => toggle('noPauseInMultiplayer', e.currentTarget.checked)}
-							/>
-							<span>{tr('overlay.set.nopause')}<small>{tr('overlay.set.nopause.hint')}</small></span>
-						</label>
-
-						<label class="check">
-							<input
-								type="checkbox"
-								checked={settings.checkForUpdates}
-								onchange={(e) => toggle('checkForUpdates', e.currentTarget.checked)}
-							/>
-							<span>{tr('overlay.set.updates')}</span>
-						</label>
+						<h2 class="group">{tr('overlay.set.group.comms')}</h2>
 
 						<label>
 							<span>{tr('overlay.set.mic')}</span>
@@ -308,6 +313,28 @@
 							<input type="checkbox" checked={settings.hearNearbyRadios}
 								onchange={(e) => toggle('hearNearbyRadios', e.currentTarget.checked)} />
 							<span>{tr('overlay.set.trucks')}</span>
+						</label>
+
+						<p class="reading">{tr('overlay.set.chatkey')}<b>{settings.chatKey || '—'}</b></p>
+
+						<h2 class="group">{tr('overlay.set.group.mod')}</h2>
+
+						<label class="check">
+							<input
+								type="checkbox"
+								checked={settings.noPauseInMultiplayer}
+								onchange={(e) => toggle('noPauseInMultiplayer', e.currentTarget.checked)}
+							/>
+							<span>{tr('overlay.set.nopause')}<small>{tr('overlay.set.nopause.hint')}</small></span>
+						</label>
+
+						<label class="check">
+							<input
+								type="checkbox"
+								checked={settings.checkForUpdates}
+								onchange={(e) => toggle('checkForUpdates', e.currentTarget.checked)}
+							/>
+							<span>{tr('overlay.set.updates')}</span>
 						</label>
 					</div>
 				{/if}
@@ -416,6 +443,33 @@
 
 	.rows { display: flex; flex-direction: column; gap: 11px; }
 
+	/* The heading of a group of settings, matching a page name of the in-game menu. */
+	.group {
+		margin: 7px 0 0;
+		padding-bottom: 5px;
+		border-bottom: 1px solid var(--st-line-soft);
+		font-size: 10px;
+		font-weight: 600;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: var(--st-amber);
+	}
+
+	.rows > .group:first-child { margin-top: 0; }
+
+	/* A line that only reports a value, e.g. the chat key, which is bound in the game's own menu. */
+	.reading {
+		margin: 0;
+		font-size: 12px;
+		color: var(--st-muted);
+	}
+
+	.reading b {
+		color: var(--st-text);
+		font-weight: 600;
+		margin-left: 6px;
+	}
+
 	label { display: flex; flex-direction: column; gap: 5px; }
 
 	label > span {
@@ -489,14 +543,6 @@
 
 	.hint { margin: 0; font-size: 12px; line-height: 1.55; color: var(--st-muted); }
 	.running { margin: 0; color: var(--st-ok); letter-spacing: 0.04em; }
-
-	code {
-		background: var(--st-field);
-		border: 1px solid var(--st-line-soft);
-		padding: 1px 5px;
-		font-size: 12px;
-		color: var(--st-amber);
-	}
 
 	.chat-body {
 		height: 240px;

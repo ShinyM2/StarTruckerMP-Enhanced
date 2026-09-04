@@ -39,9 +39,11 @@ The mod only connects once a save is loaded; in the main menu it just waits.
 - **Trucks look like their owners made them**: livery, base material, the colours picked at the paint shop, the exhausts, grill, ornament, sensors, plate and decal where the game lets them be shown, plus wear and dirt. Their headlights switch with the owner's, and a hitched trailer swings behind the cab the way the owner's does.
 - **Nameplates** carry the player's colour and the distance to the truck; the same names, in the same colours, sit under their sectors on the galactic map.
 - **CB radio.** Pick up the handset in the cab and hold the game's talk button; everyone on the server hears you with a proper radio sound, squelch bursts included. While the game's own radio conversation is running, the radio belongs to the game. A marker beside a name on the monitor and above a truck shows who is talking.
+- **Inviting friends.** Multiplayer → Friends → **Invite friends via Steam** opens Steam's invite dialog. While you host or are on a server, friends see **Join game** beside your name in their Steam friends list; accepting it starts their game pointed at your server, nothing to type. The Friends page also lists friends already on a server, one press to join them.
+- **The lobby line.** The Multiplayer page says whether the server answers and who is on it, from the main menu already: *Server 203.0.113.10:7777: 3 online — Alice, Bob, Carol*. The Connect page repeats the names under the connection status.
 - **F2** opens the multiplayer menu over the game (connection, chat, settings). **Esc** closes it.
 - **Chat**: sit in the driver's seat, switch the right-hand monitor to the docking camera, press **Enter** (rebindable), type, Enter to send. Standing up closes the line.
-- **Settings**: Multiplayer → Display (nameplates, collisions, ghosting at gates, chat key, update check) and Multiplayer → Radio and microphone (microphone, test, volumes, noise suppression, radio sound, mute during dialogue, radios in nearby trucks). The same settings are in the F2 menu. The menu speaks the game's language: English, Russian, German, French, Spanish, Portuguese, Polish, Italian and Chinese.
+- **Settings**, one subject per page and every setting on exactly one of them: Multiplayer → **Other players** (nameplates, collisions, ghosting at gates), → **Radio, chat and microphone** (chat key, microphone, test, volumes, noise suppression, radio sound, mute during dialogue, radios in nearby trucks), → **Mod settings** (no pause on a server, update check, version). The F2 menu carries the same three groups, in the same order and under the same names. The menu speaks the game's language: English, Russian, German, French, Spanish, Portuguese, Polish, Italian and Chinese.
 - The mod checks GitHub once at startup and says in the menu when a newer release is out.
 
 More in [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
@@ -50,7 +52,7 @@ More in [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
 
 ## Hosting
 
-**From the game.** Multiplayer → Host → Start. "Copy details for friends" puts the address and port on the clipboard. The server lives as long as the game is open.
+**From the game.** Multiplayer → Host → Start. "Invite friends via Steam" sends them an invitation they accept with one click; "Copy details for friends" puts the address and port on the clipboard for everyone else. The server lives as long as the game is open.
 
 **Standalone** (a VPS, say). Download `StarTruckerMP-Enhanced-server-<version>-win-x64.zip`, install the .NET 10 Runtime and run `StarTruckMP.Server.exe`. Settings appear in `server.json` next to it.
 

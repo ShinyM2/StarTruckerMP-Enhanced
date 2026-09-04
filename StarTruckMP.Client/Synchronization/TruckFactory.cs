@@ -1,35 +1,41 @@
-﻿using Il2CppSystem.Collections.Generic;
+﻿using System.Collections.Generic;
 using StarTruckMP.Client.Components;
 using StarTruckMP.Client.Patches;
 using UnityEngine;
 
 namespace StarTruckMP.Client.Synchronization;
 
+/// <summary>
+/// Makes the copy of another player's truck out of the game's own NPC cab.
+///
+/// The prefab comes with the whole NPC: a brain that plans routes, an engine that pushes, the
+/// thrusters' effects, a horn, a place on the map. None of that is wanted on a truck whose every
+/// position comes off the wire. The brain, the engine and the thrusters are switched off rather
+/// than removed, because the customiser and the container slots that paint and load the cab may
+/// hold references to them; what only registers the cab with the world — as an obstacle, a point
+/// of interest, a fine to pay — is removed, so the world does not count it.
+/// </summary>
 public static class TruckFactory
 {
-    // This types will be removed from the clone
-    private static readonly string[] AIComponentTypes =
+    /// <summary>Behaviours that drive the NPC, switched off so they never run: their references stay valid.</summary>
+    private static readonly string[] DisableTypes =
     [
         "AIVehicle_Truck",
         "AIVehicleEngine",
-        //"AIVehicleCustomiser",
-        "WarpGateTraverserAIVehicle",
-        "AITruckHorn",
-        "AIVehicleThrusters",
+        "AIVehicleThrusters"
+    ];
+
+    /// <summary>Components that only announce the cab to the world, removed so the world forgets it.</summary>
+    private static readonly string[] DestroyTypes =
+    [
         "NavObstacle",
         "RegisterPointOfInterest",
         "CollisionFineReporter",
-        "DevCameraTarget",
-        "NPCVehicleAudio",
-        "FloatingOriginTrailMover",
-        "InstantiatedAddressableAutoRelease",
-        "NPCTruckMaglockVFX"
+        "AITruckHorn",
+        "DevCameraTarget"
     ];
 
-    private static readonly string[] GameObjectNames =
-    [
-        "MaglockHitchVFX"
-    ];
+    private static bool _described;
 
     public static GameObject CreatePlayerTruck(int nContainers, Vector3 spawnPos, Quaternion spawnRot)
     {
@@ -56,96 +62,64 @@ public static class TruckFactory
         }
         truck.name = "PlayerTruck_Remote";
 
+        Describe(truckGo);
+        QuietenAi(truckGo);
+
         truckGo.AddComponent<TruckControllerComponent>();
 
         return truckGo;
     }
-    
-    public static GameObject CreatePlayerTruckFromNpc(Vector3 spawnPos, Quaternion spawnRot)
+
+    /// <summary>Stops the NPC in the prefab from behaving like one. Also for a container spawned later.</summary>
+    public static void QuietenAi(GameObject root)
     {
-        var npcPrefab = AIVehicleTruck_Patch.GetPrefab();
-        if (npcPrefab == null)
-            return null;
-        
-        // Clone a npc truck
-        var truck = Object.Instantiate(npcPrefab, spawnPos, spawnRot);
-        truck.SetActive(false); // disable before Awake/Start runs
-        truck.name = "GhostTruck_Remote";
-        
-        // disable collisions (maybe it can be enabled other time)
-        var rigidbody = truck.GetComponent<Rigidbody>();
-        if (rigidbody != null)
-            rigidbody.detectCollisions = false;
+        var disabled = 0;
+        var removed = 0;
 
-        // Delete all AI things 
-        StripAiComponents(truck);
-        
-        // Delete objects by name
-        StripByName(truck);
-        
-        // Clear existing NPC cargo but keep the slot GameObjects intact
-        // (slots must remain alive so their serialized fields are preserved for SpawnContainer)
-        ReinitContainers(truck);
-
-        // Add custom movement controller
-        truck.AddComponent<TruckControllerComponent>();
-
-        // Disable collisions with truck
-        SetTruckLayer(truck);
-
-        var npcTruckVisual = truck.transform.Find("NPCTruck");
-        if (npcTruckVisual != null)
-            npcTruckVisual.gameObject.SetActive(false);
-
-        truck.SetActive(true); // enable without AI thingy
-        return truck;
-    }
-
-    private static void StripByName(GameObject truck)
-    {
-        var allObjects = truck.GetComponentsInChildren<Transform>(includeInactive: true);
-
-        foreach (var t in allObjects)
+        foreach (var t in root.GetComponentsInChildren<Transform>(includeInactive: true))
         {
-            foreach (var name in GameObjectNames)
+            foreach (var typeName in DisableTypes)
             {
-                if (t.gameObject.name == name)
-                    Object.Destroy(t.gameObject);
+                var component = t.GetComponent(typeName);
+                if (component == null) continue;
+
+                var behaviour = component.TryCast<Behaviour>();
+                if (behaviour != null && behaviour.enabled)
+                {
+                    behaviour.enabled = false;
+                    disabled++;
+                }
+            }
+
+            foreach (var typeName in DestroyTypes)
+            {
+                var component = t.GetComponent(typeName);
+                if (component == null) continue;
+
+                Object.Destroy(component);
+                removed++;
             }
         }
+
+        if (!_described)
+            App.Log.LogInfo($"[Truck] Remote cab: {disabled} NPC behaviour(s) switched off, {removed} component(s) removed.");
     }
 
-    private static void StripAiComponents(GameObject root)
-    {
-        var allObjects = root.GetComponentsInChildren<Transform>(includeInactive: true);
-
-        foreach (var t in allObjects)
-        {
-            foreach (var typeName in AIComponentTypes)
-            {
-                var comp = t.GetComponent(typeName);
-                if (comp != null)
-                    Object.Destroy(comp);
-            }
-        }
-    }
-    
     /// <summary>
-    /// Calls Reinit() on every AIVehicleContainerSlot found in the truck hierarchy
-    /// to clear any pre-existing NPC cargo while keeping the slot GameObjects (and their
-    /// serialized fields) alive for later use by SpawnContainer.
+    /// The components on the cab's root, once per session, so what the prefab really carries
+    /// can be read off the log rather than guessed.
     /// </summary>
-    private static void ReinitContainers(GameObject root)
+    private static void Describe(GameObject truck)
     {
-        foreach (var slot in root.GetComponentsInChildren<AIVehicleContainerSlot>(true))
-            slot.Reinit();
-    }
-    
-    private static void SetTruckLayer(GameObject root)
-    {
-        // TODO: this cannot be done, we can figure out another way or just remove this
-        /*int truckLayer = LayerMask.NameToLayer("RemoteTruck");
-        foreach (var t in root.GetComponentsInChildren<Transform>(true))
-            t.gameObject.layer = truckLayer;*/
+        if (_described) return;
+        _described = true;
+
+        var names = new List<string>();
+        foreach (var component in truck.GetComponents<Component>())
+        {
+            if (component != null) names.Add(component.GetIl2CppType().Name);
+        }
+
+        App.Log.LogInfo($"[Truck] Remote cab root components: {string.Join(", ", names)}");
     }
 }

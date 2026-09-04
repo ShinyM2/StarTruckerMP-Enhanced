@@ -1,13 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
+using Il2CppInterop.Runtime.Attributes;
 using StarTruckMP.Client.Synchronization;
-using StarTruckMP.Shared.Dto;
+using StarTruckMP.Shared.Movement;
 using UnityEngine;
 
 namespace StarTruckMP.Client.Components;
 
 /// <summary>
-/// Moves a remote player's truck, or one of their trailers, the way its owner moved it.
+/// Moves a remote player's truck, or their trailer, the way its owner moved it.
 ///
 /// States arrive a few times a second, late, unevenly and sometimes not at all. The copy is
 /// therefore drawn a little in the past, at a moment of the owner's time chosen by the player's
@@ -19,8 +20,8 @@ namespace StarTruckMP.Client.Components;
 /// between where the coasting put it and where it really was is closed over a fraction of a
 /// second rather than in one jump.
 ///
-/// States are taken in on the network thread the instant they land; the transform is placed on
-/// the game thread once per rendered frame.
+/// States are put in by <see cref="MovementReceiver"/> on the network thread the instant they
+/// land; the transform is placed on the game thread once per rendered frame.
 /// </summary>
 public class TruckControllerComponent : MonoBehaviour
 {
@@ -48,6 +49,12 @@ public class TruckControllerComponent : MonoBehaviour
     /// <summary>How quickly a smoothed-over discontinuity fades: about two thirds gone after this long.</summary>
     private const float SmoothingSeconds = 0.18f;
 
+    /// <summary>
+    /// The stamp of a seed state: far enough in the past that any real state comes after it, and
+    /// finite so the interpolation between the two stays arithmetic.
+    /// </summary>
+    private const double SeedTime = -1e6;
+
     private struct Snapshot
     {
         public double Time;
@@ -65,9 +72,6 @@ public class TruckControllerComponent : MonoBehaviour
     public int NetId = -1;
 
     private RemoteTimeline _timeline;
-
-    private bool _seqKnown;
-    private uint _lastSeq;
 
     private volatile bool _hasData;
     private bool _shown;
@@ -100,6 +104,7 @@ public class TruckControllerComponent : MonoBehaviour
         _npcTruckVisual = transform.Find("NPCTruck")?.gameObject;
     }
 
+    [HideFromIl2Cpp]
     private RemoteTimeline Timeline()
     {
         if (_timeline == null && NetId >= 0) _timeline = RemoteTimeline.For(NetId);
@@ -111,80 +116,71 @@ public class TruckControllerComponent : MonoBehaviour
     // ---------------------------------------------------------------------------------------
 
     /// <summary>
-    /// Takes a state off the wire, together with the earlier states it carries. Touches nothing
-    /// of Unity's, so it may be called from the thread the packet landed on.
-    /// <paramref name="arrivedAt"/> is our clock when it did.
+    /// Slots a state into the list by the sender's time. A state already known, by its counter,
+    /// is not added twice. Touches nothing of Unity's, so any thread may call it.
     /// </summary>
-    public void ApplyNetworkState(UpdatePositionDto dto, double arrivedAt)
+    [HideFromIl2Cpp]
+    public bool Insert(uint seq, double time, in BodyState state)
     {
-        var timeline = Timeline();
-        if (timeline == null) return;
+        var snapshot = new Snapshot
+        {
+            Time = time,
+            Seq = seq,
+            Position = new Vector3(state.Position.X, state.Position.Y, state.Position.Z),
+            Rotation = new Quaternion(state.Rotation.X, state.Rotation.Y, state.Rotation.Z, state.Rotation.W),
+            Velocity = new Vector3(state.Velocity.X, state.Velocity.Y, state.Velocity.Z),
+            AngVel = new Vector3(state.AngVel.X, state.AngVel.Y, state.AngVel.Z)
+        };
 
-        // A sender without a clock of its own (an older client) is timed by its arrivals, which
-        // still plays back correctly with the network's unevenness left in.
-        var sentAt = dto.SentAt > 0 ? dto.SentAt / 1000.0 : arrivedAt;
-
-        int lostBefore;
-        var recovered = 0;
-
+        bool inserted;
         lock (_lock)
         {
-            if (_seqKnown)
-            {
-                var gap = (int)(dto.Seq - _lastSeq);
-                if (gap <= 0) return; // overtaken in flight; a later packet already told us this and more
-                lostBefore = gap - 1;
-            }
-            else
-            {
-                lostBefore = 0;
-                _seqKnown = true;
-            }
-
-            _lastSeq = dto.Seq;
-
-            Insert(new Snapshot
-            {
-                Time = sentAt,
-                Seq = dto.Seq,
-                Position = Vec(dto.Position),
-                Rotation = Quat(dto.Rotation),
-                Velocity = Vec(dto.Velocity),
-                AngVel = Vec(dto.AngVel)
-            });
-
-            var history = dto.History;
-            if (history != null && lostBefore > 0)
-            {
-                foreach (var past in history)
-                {
-                    if (past.SentAt <= 0) continue;
-                    if (Insert(new Snapshot
-                        {
-                            Time = past.SentAt / 1000.0,
-                            Seq = past.Seq,
-                            Position = Vec(past.Position),
-                            Rotation = Quat(past.Rotation),
-                            Velocity = Vec(past.Velocity),
-                            AngVel = Vec(past.AngVel)
-                        }))
-                        recovered++;
-                }
-            }
-
+            inserted = InsertLocked(snapshot);
             while (_snapshots.Count > MaxSnapshots) _snapshots.RemoveAt(0);
         }
 
-        timeline.Record(sentAt, arrivedAt);
-        timeline.NoteBurst(lostBefore, arrivedAt);
-        LinkStats.NotePacket(lostBefore);
-        LinkStats.NoteRecovered(recovered);
+        if (inserted) _hasData = true;
+        return inserted;
+    }
+
+    /// <summary>
+    /// Where the truck last was according to the server, for a copy spawned before its first
+    /// packet: a parked truck reports itself only once a second, and without this it would stand
+    /// in the wrong place until then. The state is placed in the far past and holds still, so
+    /// the first real state simply takes over from it. Game thread, before any packet.
+    /// </summary>
+    [HideFromIl2Cpp]
+    public void Seed(in BodyState state)
+    {
+        var resting = state;
+        resting.Velocity = default;
+        resting.AngVel = default;
+        Insert(0, SeedTime, resting);
+    }
+
+    /// <summary>
+    /// Takes over the states of the mover this one replaces, so a truck rebuilt for a new
+    /// trailer carries on from where the old copy was rather than waiting for the next packet.
+    /// </summary>
+    public void TakeOver(TruckControllerComponent previous)
+    {
+        if (previous == null || ReferenceEquals(previous, this)) return;
+
+        List<Snapshot> copy;
+        lock (previous._lock) copy = new List<Snapshot>(previous._snapshots);
+        if (copy.Count == 0) return;
+
+        lock (_lock)
+        {
+            foreach (var snapshot in copy) InsertLocked(snapshot);
+            while (_snapshots.Count > MaxSnapshots) _snapshots.RemoveAt(0);
+        }
 
         _hasData = true;
     }
 
-    /// <summary>Slots a state into the list by the sender's time; a state already known is not added twice.</summary>
-    private bool Insert(Snapshot snapshot)
+    [HideFromIl2Cpp]
+    private bool InsertLocked(Snapshot snapshot)
     {
         var index = _snapshots.Count;
         while (index > 0 && _snapshots[index - 1].Time > snapshot.Time) index--;
@@ -304,6 +300,7 @@ public class TruckControllerComponent : MonoBehaviour
     // ---------------------------------------------------------------------------------------
 
     /// <summary>The state at a moment of the owner's time: between two known states, or coasting past the last.</summary>
+    [HideFromIl2Cpp]
     private void Sample(double time, out Vector3 position, out Quaternion rotation, out Vector3 velocity, out Vector3 angVel)
     {
         var newest = _snapshots[_snapshots.Count - 1];
@@ -393,7 +390,4 @@ public class TruckControllerComponent : MonoBehaviour
         if (speed < 1e-4f || seconds <= 0f) return rotation;
         return Quaternion.AngleAxis(speed * seconds * Mathf.Rad2Deg, angVel / speed) * rotation;
     }
-
-    private static Vector3 Vec(global::StarTruckMP.Shared.Vector3 v) => new(v.X, v.Y, v.Z);
-    private static Quaternion Quat(global::StarTruckMP.Shared.Quaternion q) => new(q.X, q.Y, q.Z, q.W);
 }

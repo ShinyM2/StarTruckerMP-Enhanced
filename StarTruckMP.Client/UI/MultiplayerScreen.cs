@@ -4,6 +4,7 @@ using System.Text;
 using Il2CppInterop.Runtime;
 using StarTruckMP.Client.Audio;
 using StarTruckMP.Client.Synchronization;
+using StarTruckMP.Shared.Dto.Api;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -25,7 +26,14 @@ namespace StarTruckMP.Client.UI;
 /// </summary>
 internal static class MultiplayerScreen
 {
-    private enum Page { Root, Host, Player, Display, Voice }
+    /// <summary>
+    /// One page per subject, and every setting on exactly one of them: who else you see
+    /// (<see cref="Page.Display"/>), how you talk to them (<see cref="Page.Voice"/>), and what
+    /// the mod itself does (<see cref="Page.Mod"/>). Joining has three pages because there are
+    /// three ways in — a Steam friend, an address, or a server of your own — and each shows only
+    /// its own controls, so nothing appears twice.
+    /// </summary>
+    private enum Page { Root, Host, Player, Display, Voice, Friends, Mod }
 
     /// <summary>The microphone volumes a click steps through, as multipliers.</summary>
     private static readonly float[] GainSteps = { 0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 2.5f, 3f };
@@ -73,9 +81,40 @@ internal static class MultiplayerScreen
     private static GameObject _nearbyRadiosRow;
     private static GameObject _updatesRow;
     private static GameObject _noPauseRow;
+    private static GameObject _versionRow;
     private static GameObject _updateRow;
     private static GameObject _copyAddressRow;
     private static float _addressCopiedUntil;
+
+    // The lobby: the server line, who is online, the invite rows and the friends page.
+    private static GameObject _serverRow;
+    private static GameObject _onlineRow;
+
+    /// <summary>
+    /// The one Steam invite button, on the friends page. It used to sit on three pages at once,
+    /// so the same control was met three times; the other two pages now carry a line that opens
+    /// the friends page instead.
+    /// </summary>
+    private static GameObject _friendsInviteRow;
+    private static GameObject _friendsHeaderRow;
+    private const int FriendRowCount = 6;
+    private static readonly GameObject[] _friendRows = new GameObject[FriendRowCount];
+    private static string _inviteNotice;
+    private static float _inviteNoticeUntil;
+
+    /// <summary>Rows kept off even while their page is open: friend slots with nobody in them.</summary>
+    private static readonly HashSet<GameObject> _suppressed = new();
+
+    /// <summary>Whether each of the game's own entries was enabled when the page put it aside.</summary>
+    private static readonly Dictionary<GameObject, bool> _hiddenState = new();
+
+    /// <summary>The game's entries just handed back, kept in shape for a moment after the page closes.</summary>
+    private static readonly List<GameObject> _restoring = new();
+
+    /// <summary>Each of those entries' own <c>disableOnEnable</c>, to be given back with it.</summary>
+    private static readonly Dictionary<GameObject, bool> _restoreFlag = new();
+
+    private static float _restoreUntil;
 
     /// <summary>Set while the chat-key row is waiting for the player to press its replacement.</summary>
     private static bool _listening;
@@ -99,6 +138,8 @@ internal static class MultiplayerScreen
         // The menu is rebuilt whenever the player returns to it, so the old rows are gone.
         _pages.Clear();
         _hidden.Clear();
+        _hiddenState.Clear();
+        _suppressed.Clear();
         _labelled.Clear();
         _fields.Clear();
         _typingIn = null;
@@ -121,11 +162,18 @@ internal static class MultiplayerScreen
 
             // Put the game's own entries aside rather than destroying them.
             _hidden.Clear();
+            _hiddenState.Clear();
+            _restoring.Clear();
+            _restoreFlag.Clear();
             foreach (var child in _column)
             {
                 var t = child.Cast<Transform>();
                 if (t == null || IsOurs(t.gameObject)) continue;
                 if (!t.gameObject.activeSelf) continue;
+
+                // Remember whether the entry was enabled: it comes back the way it was.
+                var entry = t.GetComponent<MenuButton>();
+                _hiddenState[t.gameObject] = entry == null || entry.isInteractable;
 
                 _hidden.Add(t.gameObject);
                 t.gameObject.SetActive(false);
@@ -156,15 +204,65 @@ internal static class MultiplayerScreen
 
         if (_title != null) _title.SetActive(false);
 
+        _restoring.Clear();
+        _restoreFlag.Clear();
+
         foreach (var go in _hidden)
         {
-            if (go != null) go.SetActive(true);
+            if (go == null) continue;
+
+            // An entry carries disableOnEnable, so simply switching it back on drops it into its
+            // Disabled animation state with the label faded to nothing — the blank gap the menu
+            // came back with. The flag is off for the moment of the switch and goes back on once
+            // the entry has settled.
+            var button = go.GetComponent<MenuButton>();
+            if (button != null)
+            {
+                _restoreFlag[go] = button.disableOnEnable;
+                button.disableOnEnable = false;
+            }
+
+            go.SetActive(true);
+            Restore(go);
+            _restoring.Add(go);
         }
+
+        _restoreUntil = Time.unscaledTime + 1f;
 
         _hidden.Clear();
         _open = false;
         SetTyping(null);
         VoiceInputComponent.SetTesting(false);
+    }
+
+    /// <summary>
+    /// The game's own entries, switched back on once the page closes, came up faded: an entry
+    /// carries <c>disableOnEnable</c>, so being enabled put it into its Disabled animation state
+    /// with the label at nothing, and only the cursor passing over it woke it up again. Each
+    /// goes back into the state it had, enabled, or greyed when the game had greyed it.
+    /// </summary>
+    private static void Restore(GameObject go)
+    {
+        var button = go.GetComponent<MenuButton>();
+        if (button == null) return;
+
+        try
+        {
+            var enabled = !_hiddenState.TryGetValue(go, out var was) || was;
+            button.SetEnabled(enabled);
+            button.ForceRefresh();
+        }
+        catch (Exception ex)
+        {
+            App.Log.LogWarning($"[MP screen] Could not restore a menu entry: {ex.Message}");
+        }
+    }
+
+    /// <summary>Copes with the address being changed from outside the page: a Steam invitation, or a friend row.</summary>
+    public static void AddressChanged()
+    {
+        if (_addressField != null) _addressField.Text = App.ServerAddress.Value;
+        if (_portField != null) _portField.Text = App.ServerPort.Value;
     }
 
     /// <summary>How often the live rows are redrawn on their own; a click redraws at once.</summary>
@@ -181,6 +279,7 @@ internal static class MultiplayerScreen
     /// </summary>
     public static void Tick()
     {
+        RestoreTick();
         if (!_open) return;
 
         if (_listening) Listen();
@@ -189,6 +288,39 @@ internal static class MultiplayerScreen
         if (Time.unscaledTime < _nextRefresh) return;
         _nextRefresh = Time.unscaledTime + RefreshSeconds;
         Refresh();
+    }
+
+    /// <summary>
+    /// For a second after the page closes, the game's own entries are put back into shape every
+    /// frame.
+    ///
+    /// One pass was not enough: the screen's controller runs its own enabling a frame or two
+    /// later, and any entry it touched after that single fix stayed invisible — which is how the
+    /// menu came back with a blank gap where its buttons are. Each entry's own
+    /// <c>disableOnEnable</c> is handed back at the end of the second.
+    /// </summary>
+    private static void RestoreTick()
+    {
+        if (_restoring.Count == 0) return;
+
+        var done = Time.unscaledTime >= _restoreUntil;
+
+        foreach (var go in _restoring)
+        {
+            if (go == null || !go.activeInHierarchy) continue;
+
+            Restore(go);
+            if (!done) continue;
+
+            var button = go.GetComponent<MenuButton>();
+            if (button != null && _restoreFlag.TryGetValue(go, out var flag)) button.disableOnEnable = flag;
+        }
+
+        if (!done) return;
+
+        _restoring.Clear();
+        _restoreFlag.Clear();
+        _hiddenState.Clear();
     }
 
     /// <summary>
@@ -266,8 +398,9 @@ internal static class MultiplayerScreen
             {
                 if (row == null) continue;
 
-                row.SetActive(visible);
-                if (visible) Revive(row.GetComponent<MenuButton>());
+                var shown = visible && !_suppressed.Contains(row);
+                row.SetActive(shown);
+                if (shown) Revive(row.GetComponent<MenuButton>());
             }
         }
 
@@ -277,6 +410,8 @@ internal static class MultiplayerScreen
             Page.Player => Strings.Get("title.player"),
             Page.Display => Strings.Get("title.display"),
             Page.Voice => Strings.Get("title.radio"),
+            Page.Friends => Strings.Get("title.friends"),
+            Page.Mod => Strings.Get("title.mod"),
             _ => Strings.Get("title.multiplayer")
         });
 
@@ -303,20 +438,28 @@ internal static class MultiplayerScreen
     {
         BuildTitle();
 
-        // Root: choose a role first, exactly as the settings hub asks for a section first.
-        LabelledRow(Page.Root, "root.host", () => Open(Page.Host));
+        // Root: the three ways onto a server first, in the order a player should try them —
+        // a Steam friend, an address someone gave you, a server of your own — then the three
+        // groups of settings, then the lines that only report.
+        if (Invites.Available) LabelledRow(Page.Root, "root.friends", () => Open(Page.Friends));
         LabelledRow(Page.Root, "root.player", () => Open(Page.Player));
+        LabelledRow(Page.Root, "root.host", () => Open(Page.Host));
         LabelledRow(Page.Root, "root.display", () => Open(Page.Display));
         LabelledRow(Page.Root, "root.radio", () => Open(Page.Voice));
+        LabelledRow(Page.Root, "root.mod", () => Open(Page.Mod));
+        _serverRow = InfoRow(Page.Root);
         _updateRow = InfoRow(Page.Root);
         BackRow(Page.Root, Hide);
 
-        // Player.
+        // Connect by address: the fallback for a server no Steam friend of yours is on, so it
+        // says as much rather than leaving a player typing numbers they did not need.
         _addressField = TextRow(Page.Player, Strings.Get("player.address"), App.ServerAddress.Value);
         _portField = TextRow(Page.Player, Strings.Get("player.port"), App.ServerPort.Value);
         LabelledRow(Page.Player, "player.connect", Connect);
         _statusRow = InfoRow(Page.Player);
+        _onlineRow = InfoRow(Page.Player);
         _copyAddressRow = ActionRow(Page.Player, string.Empty, CopyAddress);
+        if (Invites.Available) InfoRow(Page.Player, "player.hint");
         BackRow(Page.Player, () => Open(Page.Root));
 
         // Host.
@@ -324,7 +467,25 @@ internal static class MultiplayerScreen
         _hostStateRow = InfoRow(Page.Host);
         _shareRow = InfoRow(Page.Host);
         _copyRow = ActionRow(Page.Host, string.Empty, CopyShareText);
+        if (Invites.Available) LabelledRow(Page.Host, "root.friends", () => Open(Page.Friends));
         BackRow(Page.Host, () => Open(Page.Root));
+
+        // Friends: the invite dialog, and every friend already on a server as a row to press.
+        // The slots exist from the start and are kept off until a friend fills them.
+        if (Invites.Available)
+        {
+            _friendsInviteRow = ActionRow(Page.Friends, string.Empty, InviteViaSteam);
+            _friendsHeaderRow = InfoRow(Page.Friends);
+
+            for (var i = 0; i < FriendRowCount; i++)
+            {
+                var slot = i;
+                _friendRows[i] = ActionRow(Page.Friends, string.Empty, () => JoinFriend(slot));
+                _suppressed.Add(_friendRows[i]);
+            }
+
+            BackRow(Page.Friends, () => Open(Page.Root));
+        }
 
         // Display.
         _nameplatesRow = ActionRow(Page.Display, string.Empty, () =>
@@ -345,28 +506,37 @@ internal static class MultiplayerScreen
             Refresh();
         });
 
-        _chatKeyRow = ActionRow(Page.Display, string.Empty, () =>
-        {
-            _listening = !_listening;
-            Refresh();
-        });
+        BackRow(Page.Display, () => Open(Page.Root));
 
-        _noPauseRow = ActionRow(Page.Display, string.Empty, () =>
+        // The mod's own switches: neither of them changes anything about the other players, so
+        // neither belongs on the page that does.
+        _noPauseRow = ActionRow(Page.Mod, string.Empty, () =>
         {
             App.NoPauseInMultiplayer.Value = !App.NoPauseInMultiplayer.Value;
             Refresh();
         });
 
-        _updatesRow = ActionRow(Page.Display, string.Empty, () =>
+        InfoRow(Page.Mod, "mod.nopause.hint");
+
+        _updatesRow = ActionRow(Page.Mod, string.Empty, () =>
         {
             App.CheckForUpdates.Value = !App.CheckForUpdates.Value;
             Refresh();
         });
 
-        BackRow(Page.Display, () => Open(Page.Root));
+        _versionRow = InfoRow(Page.Mod);
+        BackRow(Page.Mod, () => Open(Page.Root));
 
-        // Radio. Values step round on a click, the way the chat key does, because the menu's rows
-        // have no left/right arrows to borrow.
+        // Radio and chat: everything you use to reach the other players, the chat key included —
+        // it was on the display page, where nothing else had to do with talking.
+        _chatKeyRow = ActionRow(Page.Voice, string.Empty, () =>
+        {
+            _listening = !_listening;
+            Refresh();
+        });
+
+        // Values step round on a click, the way the chat key does, because the menu's rows have
+        // no left/right arrows to borrow.
         _micRow = ActionRow(Page.Voice, string.Empty, CycleMicrophone);
 
         _micTestRow = ActionRow(Page.Voice, string.Empty, () =>
@@ -562,6 +732,15 @@ internal static class MultiplayerScreen
         {
             App.Log.LogWarning($"[MP screen] Could not reset a menu row's state: {ex.Message}");
         }
+    }
+
+    /// <summary>A read-only line whose words are fixed, so it follows a language change too.</summary>
+    private static GameObject InfoRow(Page page, string key)
+    {
+        var row = InfoRow(page);
+        SetRowText(row, Strings.Get(key));
+        _labelled.Add((row, key));
+        return row;
     }
 
     /// <summary>
@@ -940,10 +1119,13 @@ internal static class MultiplayerScreen
         }
 
         if (_updatesRow != null)
-            SetRowValue(_updatesRow, Strings.Get("display.updates"), OnOff(App.CheckForUpdates.Value));
+            SetRowValue(_updatesRow, Strings.Get("mod.updates"), OnOff(App.CheckForUpdates.Value));
 
         if (_noPauseRow != null)
-            SetRowValue(_noPauseRow, Strings.Get("display.nopause"), OnOff(App.NoPauseInMultiplayer.Value));
+            SetRowValue(_noPauseRow, Strings.Get("mod.nopause"), OnOff(App.NoPauseInMultiplayer.Value));
+
+        if (_versionRow != null)
+            SetRowText(_versionRow, Strings.Get("mod.version") + PluginInfo.PLUGIN_VERSION);
 
         if (_hostToggleRow != null)
         {
@@ -985,11 +1167,12 @@ internal static class MultiplayerScreen
             SetRowValue(_ghostRow, Strings.Get("display.ghost"), OnOff(App.GhostMode.Value));
 
         if (_chatKeyRow != null)
-            SetRowValue(_chatKeyRow, Strings.Get("display.chatkey"),
+            SetRowValue(_chatKeyRow, Strings.Get("comms.chatkey"),
                 _listening
-                    ? Strings.Get("display.presskey")
+                    ? Strings.Get("comms.presskey")
                     : MonitorPanel.KeyName(App.ChatKey.Value));
 
+        RefreshLobby();
         RefreshVoice();
     }
 
@@ -1017,6 +1200,137 @@ internal static class MultiplayerScreen
         return Network.InWorld
             ? Strings.Get("player.status.connecting", where)
             : Strings.Get("player.status.waitsave");
+    }
+
+    /// <summary>
+    /// The lobby rows: the server line on the root page, who is online on the player page, the
+    /// invite rows, and the friends page. The server is asked every few seconds while any page
+    /// is up, so a player in the main menu sees the server answer and their friends on it before
+    /// loading a save.
+    /// </summary>
+    private static void RefreshLobby()
+    {
+        ServerStatus.Poll();
+
+        if (_serverRow != null) SetRowText(_serverRow, ServerLine());
+        if (_onlineRow != null) SetRowText(_onlineRow, OnlineLine());
+
+        if (_friendsInviteRow != null) SetRowText(_friendsInviteRow, InviteLabel());
+
+        if (_page == Page.Friends) RefreshFriends();
+    }
+
+    private static string InviteLabel()
+    {
+        if (_inviteNotice != null && Time.unscaledTime < _inviteNoticeUntil) return _inviteNotice;
+        return Invites.CanInvite ? Strings.Get("invite.steam") : Strings.Get("invite.noaddress");
+    }
+
+    /// <summary>An older server answers the sign-in but has no status page; that is not "down".</summary>
+    private static bool ServerIsOlder =>
+        !ServerStatus.Checking && ServerStatus.Error != null && ServerStatus.Error.StartsWith("HTTP", StringComparison.Ordinal);
+
+    /// <summary>One line about the server the menu is pointed at, for the root page.</summary>
+    private static string ServerLine()
+    {
+        var target = ServerStatus.Target;
+
+        // Fresh from a Steam invitation and not in the world yet: say what to do next.
+        if (Invites.LastJoin != null && !Network.InWorld && Time.unscaledTime - Invites.LastJoinAt < 60f)
+            return Strings.Get("join.notice", Invites.LastJoin);
+
+        if (ServerStatus.Checking) return Strings.Get("server.checking", target);
+
+        var status = ServerStatus.Result;
+        if (status == null)
+            return Strings.Get(ServerIsOlder ? "server.old" : "server.down", target);
+
+        return status.Players == 0
+            ? Strings.Get("server.empty", target)
+            : Strings.Get("server.online", target, status.Players, Names(status));
+    }
+
+    /// <summary>Who is on the server, for the player page.</summary>
+    private static string OnlineLine()
+    {
+        var status = ServerStatus.Result;
+        if (status == null)
+            return Strings.Get(ServerIsOlder ? "player.online.old" : "player.online.unknown");
+
+        return status.Players == 0
+            ? Strings.Get("player.online.none")
+            : Strings.Get("player.online", status.Players, Names(status));
+    }
+
+    /// <summary>The first few names, and how many more there are.</summary>
+    private static string Names(ServerStatusDto status)
+    {
+        const int shown = 5;
+        var names = new List<string>();
+        foreach (var p in status.Names)
+        {
+            if (names.Count == shown) break;
+            names.Add(p.Name);
+        }
+
+        var text = string.Join(", ", names);
+        var more = status.Players - names.Count;
+        return more > 0 ? $"{text} +{more}" : text;
+    }
+
+    /// <summary>Fills the friend slots from Steam and shows exactly as many rows as there are friends on servers.</summary>
+    private static void RefreshFriends()
+    {
+        Invites.RefreshFriends();
+        var friends = Invites.Friends;
+
+        if (_friendsHeaderRow != null)
+        {
+            SetRowText(_friendsHeaderRow, !Invites.SteamReady
+                ? Strings.Get("friends.waiting")
+                : friends.Count == 0 ? Strings.Get("friends.none") : Strings.Get("friends.header"));
+        }
+
+        for (var i = 0; i < FriendRowCount; i++)
+        {
+            var row = _friendRows[i];
+            if (row == null) continue;
+
+            if (i < friends.Count)
+            {
+                SetRowText(row, Strings.Get("friends.join", friends[i].Name, friends[i].Connect));
+                if (_suppressed.Remove(row))
+                {
+                    row.SetActive(true);
+                    Revive(row.GetComponent<MenuButton>());
+                }
+            }
+            else if (_suppressed.Add(row))
+            {
+                row.SetActive(false);
+            }
+        }
+    }
+
+    private static void InviteViaSteam()
+    {
+        var possible = Invites.CanInvite;
+        var opened = possible && Invites.OpenSteamDialog();
+
+        _inviteNotice = opened
+            ? Strings.Get("invite.opened")
+            : Strings.Get(possible ? "invite.failed" : "invite.noaddress");
+        _inviteNoticeUntil = Time.unscaledTime + 4f;
+        Refresh();
+    }
+
+    private static void JoinFriend(int slot)
+    {
+        var friends = Invites.Friends;
+        if (slot >= friends.Count) return;
+
+        Invites.Join(friends[slot].Connect, $"friend {friends[slot].Name}", false);
+        Open(Page.Player);
     }
 
     private static void RefreshVoice()
@@ -1188,14 +1502,12 @@ internal static class MultiplayerScreen
 
     private static void Connect()
     {
-        if (_addressField != null && !string.IsNullOrWhiteSpace(_addressField.Text))
-            App.ServerAddress.Value = _addressField.Text.Trim();
+        var address = _addressField != null && !string.IsNullOrWhiteSpace(_addressField.Text) ? _addressField.Text : App.ServerAddress.Value;
+        var port = _portField != null && !string.IsNullOrWhiteSpace(_portField.Text) ? _portField.Text : App.ServerPort.Value;
 
-        if (_portField != null && !string.IsNullOrWhiteSpace(_portField.Text))
-            App.ServerPort.Value = _portField.Text.Trim();
-
-        App.Log.LogInfo($"[MP screen] Connecting to {App.ServerAddress.Value}:{App.ServerPort.Value}");
-        Network.Reconnect();
+        App.Log.LogInfo($"[MP screen] Connecting to {address.Trim()}:{port.Trim()}");
+        Network.SwitchServer(address, port);
+        ServerStatus.Reset();
         Refresh();
     }
 
@@ -1213,9 +1525,9 @@ internal static class MultiplayerScreen
             // A host plays on their own machine.
             if (HostControl.IsHosting && App.ServerAddress.Value != "127.0.0.1")
             {
-                App.ServerAddress.Value = "127.0.0.1";
+                Network.SwitchServer("127.0.0.1", App.ServerPort.Value);
+                ServerStatus.Reset();
                 if (_addressField != null) _addressField.Text = "127.0.0.1";
-                Network.Reconnect();
             }
         }
 

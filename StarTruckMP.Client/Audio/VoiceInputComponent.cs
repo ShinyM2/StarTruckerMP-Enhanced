@@ -76,6 +76,11 @@ public class VoiceInputComponent : MonoBehaviour
 
     // Raw PCM frames queued by Update (main thread) → consumed by the encoder thread.
     private readonly ConcurrentQueue<float[]> _encodeQueue = new();
+
+    /// <summary>Wakes the encoder the moment a frame is queued, rather than on its next five-millisecond look.</summary>
+    private readonly AutoResetEvent _encodeSignal = new(false);
+
+    private bool _wasCapturing;
     private readonly List<MicOpenCandidate> _micCandidates = new();
 
     private PcmStreamPlayer _loopback;
@@ -130,8 +135,9 @@ public class VoiceInputComponent : MonoBehaviour
         var active = Transmitting || Testing;
         if (active)
             ReadMicFrames();
-        else
+        else if (_wasCapturing)
             ResetMicReadState(); // discard stale data and re-prime before the next talk burst
+        _wasCapturing = active;
 
         if (InputLevel > 0f)
             InputLevel = Mathf.Max(0f, InputLevel - LevelDecayPerSecond * Time.unscaledDeltaTime);
@@ -257,6 +263,7 @@ public class VoiceInputComponent : MonoBehaviour
             else if (Transmitting)
             {
                 _encodeQueue.Enqueue(frame);
+                _encodeSignal.Set();
             }
         }
     }
@@ -302,7 +309,7 @@ public class VoiceInputComponent : MonoBehaviour
             }
             else
             {
-                Thread.Sleep(5);
+                _encodeSignal.WaitOne(20);
             }
         }
     }
@@ -691,6 +698,7 @@ public class VoiceInputComponent : MonoBehaviour
         _enabled = false;
         if (!_cts.IsCancellationRequested)
             _cts.Cancel();
+        _encodeSignal.Set();
 
         SetTesting(false);
 

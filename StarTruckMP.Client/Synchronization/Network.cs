@@ -10,21 +10,34 @@ using StarTruckMP.Client.Crypto;
 using StarTruckMP.Shared;
 using StarTruckMP.Shared.Cmd;
 using StarTruckMP.Shared.Dto;
+using StarTruckMP.Shared.Movement;
 
 namespace StarTruckMP.Client.Synchronization;
 
+/// <summary>
+/// The UDP link to the server.
+///
+/// Packets are handed over on LiteNetLib's own socket thread the instant they land. That thread
+/// is not attached to the IL2CPP runtime, so nothing raised from here may touch the game: the
+/// handlers of these events either do pure managed work (movement, voice) or queue what they
+/// need for the game thread to do in its next Update.
+/// </summary>
 public class Network
 {
     public static event Action<int> OnConnected;
     public static event Action OnDisconnected;
-    /// <summary>A movement packet and our clock, in seconds, at the instant it landed.</summary>
-    public static event Action<UpdatePositionDto, double> OnPlayerPositionUpdate;
+
+    /// <summary>A movement packet, with our clock at the instant it landed. Socket thread.</summary>
+    public static event Action<MovementUpdate> OnPlayerMovement;
+
+    /// <summary>Everything the server knows about a player, on join and on our own connect. Socket thread.</summary>
+    public static event Action<PlayerSnapshotDto> OnPlayerSnapshot;
+
     public static event Action<UpdateLiveryDto> OnTruckLiveryUpdate;
     public static event Action<UpdateSectorDto> OnPlayerSectorUpdate;
     public static event Action<int> OnPlayerDisconnected;
     public static event Action<UpdateTrailerDto> OnTrailerUpdate;
     public static event Action<VoiceDto> OnVoiceReceived;
-    public static event Action<int, string> OnPlayerNameUpdate;
     public static event Action<ChatDto> OnChatReceived;
     public static event Action<PingsDto> OnPingsUpdate;
     public static event Action<TruckStateDto> OnTruckStateUpdate;
@@ -34,6 +47,10 @@ public class Network
     private static NetPeer _server;
     private static bool _handshakeCompleted = false;
     private static int _netId = -1;
+
+    /// <summary>Why the last connection ended, as the library reported it; decides what a failed attempt means.</summary>
+    private static volatile DisconnectReason _lastDisconnect = DisconnectReason.ConnectionFailed;
+    private static volatile bool _disconnectSeen;
 
     // ── Encryption ────────────────────────────────────────────────────────────
     /// <summary>Ephemeral ECDH key pair generated before connecting. Disposed after session key derivation.</summary>
@@ -115,6 +132,27 @@ public class Network
         }
     }
 
+    /// <summary>A movement packet, already laid out by <see cref="MovementCodec"/>. Unreliable, and quiet when not connected.</summary>
+    public static void SendMovement(ReadOnlySpan<byte> payload)
+    {
+        var server = _server;
+        if (server == null || _sessionCipher is null) return;
+
+        var plain = new byte[1 + payload.Length];
+        plain[0] = (byte)PacketType.UpdatePosition;
+        payload.CopyTo(plain.AsSpan(1));
+
+        try
+        {
+            server.Send(BuildEncryptedPacket(plain), DeliveryMethod.Unreliable);
+            _client?.TriggerUpdate();
+        }
+        catch (Exception e)
+        {
+            App.Log.LogWarning($"Movement send failed: {e.Message}");
+        }
+    }
+
     /// <summary>Do not use this for normal messages.</summary>
     public static void SendOpusFrame(byte[] opusFrame)
     {
@@ -184,6 +222,7 @@ public class Network
             }
 
             attempt++;
+            _disconnectSeen = false;
 
             try
             {
@@ -232,13 +271,21 @@ public class Network
 
             if (!_handshakeCompleted)
             {
-                // Either nobody is listening yet, or the token was refused — which is what a
-                // server restart looks like, since it keeps its tokens in memory. Throw the
-                // token away so the auth thread fetches a fresh one before the next attempt.
-                App.Log.LogWarning($"Connection attempt {attempt} got no handshake, retrying in {RetryDelayMs / 1000}s.");
+                // A server that turned the connection down does not know the token: it was
+                // restarted, or the token has expired. Only then is a fresh one worth fetching.
+                // A server that did not answer at all is simply not there yet, and the token
+                // we hold is as good as any — asking Steam for a new ticket every attempt would
+                // only pile up tickets while a port stays closed.
+                var rejected = _disconnectSeen && _lastDisconnect == DisconnectReason.ConnectionRejected;
+                App.Log.LogWarning($"Connection attempt {attempt} got no handshake ({(_disconnectSeen ? _lastDisconnect.ToString() : "no answer")}), retrying in {RetryDelayMs / 1000}s.");
                 Cleanup();
-                PlayerState.Token = "";
-                App.ReAuthenticate?.Invoke();
+
+                if (rejected)
+                {
+                    PlayerState.Token = "";
+                    App.ReAuthenticate?.Invoke();
+                }
+
                 Thread.Sleep(RetryDelayMs);
                 continue;
             }
@@ -265,6 +312,34 @@ public class Network
     {
         App.Log.LogInfo("Reconnect requested.");
         try { _server?.Disconnect(); } catch { /* already gone */ }
+    }
+
+    /// <summary>
+    /// Points the mod at another server. The session token was issued by the old one and means
+    /// nothing to the new, so it is dropped and a fresh sign-in started at once rather than
+    /// waiting for the new server to reject it; the polling loop then joins with the new token.
+    /// </summary>
+    public static void SwitchServer(string address, string port)
+    {
+        address = (address ?? string.Empty).Trim();
+        port = (port ?? string.Empty).Trim();
+
+        var changed = (address.Length > 0 && address != App.ServerAddress.Value)
+                      || (port.Length > 0 && port != App.ServerPort.Value);
+
+        if (address.Length > 0) App.ServerAddress.Value = address;
+        if (port.Length > 0) App.ServerPort.Value = port;
+
+        App.Log.LogInfo($"Server set to {App.ServerAddress.Value}:{App.ServerPort.Value}{(changed ? "" : " (unchanged)")}.");
+
+        if (changed)
+        {
+            PlayerState.Token = "";
+            AuthProblem = null;
+            App.ReAuthenticate?.Invoke();
+        }
+
+        Reconnect();
     }
 
     /// <summary>Tears down the current attempt so the next one starts from a clean slate.</summary>
@@ -295,7 +370,8 @@ public class Network
 
             if (packetType == PacketType.EncryptedPayload)
             {
-                if (_sessionCipher is null)
+                var cipher = _sessionCipher;
+                if (cipher is null)
                 {
                     App.Log.LogError("Received EncryptedPayload but session cipher is not ready - dropping.");
                     return;
@@ -304,7 +380,7 @@ public class Network
                 var encFrame = reader.GetRemainingBytes();
                 try
                 {
-                    var plaintext = _sessionCipher.Decrypt(encFrame);
+                    var plaintext = cipher.Decrypt(encFrame);
                     if (plaintext.Length < 1) return;
                     packetType = (PacketType)plaintext[0];
                     raw = plaintext[1..];
@@ -312,6 +388,11 @@ public class Network
                 catch (CryptographicException ex)
                 {
                     App.Log.LogError("Decryption failed: " + ex.Message);
+                    return;
+                }
+                catch (ObjectDisposedException)
+                {
+                    // The connection is being torn down under us; nothing to do with the packet.
                     return;
                 }
             }
@@ -331,22 +412,22 @@ public class Network
             {
                 // ordered by most common to less common
                 case PacketType.UpdatePosition:
-                    HandlePositionUpdate(raw.Deserialize<UpdatePositionDto>(), arrivedAt);
+                    HandleMovement(raw, arrivedAt);
                     break;
                 case PacketType.Voice:
                     HandleVoice(raw);
                     break;
-                case PacketType.UpdateTrailer:
-                    HandleTrailerUpdate(raw.Deserialize<UpdateTrailerDto>());
-                    break;
                 case PacketType.TruckState:
                     OnTruckStateUpdate?.Invoke(raw.Deserialize<TruckStateDto>());
                     break;
+                case PacketType.UpdateTrailer:
+                    OnTrailerUpdate?.Invoke(raw.Deserialize<UpdateTrailerDto>());
+                    break;
                 case PacketType.UpdateLivery:
-                    HandleUpdateLivery(raw.Deserialize<UpdateLiveryDto>());
+                    OnTruckLiveryUpdate?.Invoke(raw.Deserialize<UpdateLiveryDto>());
                     break;
                 case PacketType.UpdateSector:
-                    HandleSectorUpdate(raw.Deserialize<UpdateSectorDto>());
+                    OnPlayerSectorUpdate?.Invoke(raw.Deserialize<UpdateSectorDto>());
                     break;
                 case PacketType.Chat:
                     OnChatReceived?.Invoke(raw.Deserialize<ChatDto>());
@@ -361,7 +442,7 @@ public class Network
                     HandlePlayerConnected(raw.Deserialize<PlayerSnapshotDto>());
                     break;
                 case PacketType.PlayerDisconnected:
-                    HandlePlayerDisconnected(raw.Deserialize<PlayerDisconnectedDto>());
+                    OnPlayerDisconnected?.Invoke(raw.Deserialize<PlayerDisconnectedDto>().NetId);
                     break;
                 case PacketType.ProtocolWelcome:
                     HandleWelcome(raw.Deserialize<ProtocolWelcomeDto>());
@@ -385,15 +466,35 @@ public class Network
         }
     }
 
+    private static long _lastMalformedLog;
+
+    /// <summary>The history buffer is per call: the handler may keep the array, and packets land on one thread.</summary>
+    private static void HandleMovement(byte[] raw, double arrivedAt)
+    {
+        if (!MovementCodec.TryReadRelayed(raw, out var netId, out var payload)) return;
+
+        var history = new MovementEntry[MovementCodec.MaxHistory];
+        if (!MovementCodec.TryRead(payload, out var current, history, out var count))
+        {
+            // The server checks packets before relaying them, so this is a build mismatch
+            // rather than a bad link; once in a while is enough to say so.
+            var now = Environment.TickCount64;
+            if (now - _lastMalformedLog > 10_000)
+            {
+                _lastMalformedLog = now;
+                App.Log.LogWarning($"Dropped a malformed movement packet from {netId} ({payload.Length} bytes).");
+            }
+
+            return;
+        }
+
+        OnPlayerMovement?.Invoke(new MovementUpdate(netId, current, count > 0 ? history : null, count, arrivedAt));
+    }
+
     private static void HandleVoice(byte[] raw)
     {
         var dto = raw.Deserialize<VoiceDto>();
         OnVoiceReceived?.Invoke(dto);
-    }
-
-    private static void HandlePlayerDisconnected(PlayerDisconnectedDto disconnected)
-    {
-        OnPlayerDisconnected?.Invoke(disconnected.NetId);
     }
 
     private static void HandlePlayerConnected(PlayerSnapshotDto snapshot)
@@ -404,61 +505,12 @@ public class Network
             return;
         }
 
-        OnPlayerNameUpdate?.Invoke(snapshot.NetId, snapshot.Name);
-
-        OnPlayerSectorUpdate?.Invoke(new UpdateSectorDto
-        {
-            NetId = snapshot.NetId,
-            Sector = snapshot.Sector
-        });
-
-        OnPlayerPositionUpdate?.Invoke(new UpdatePositionDto
-        {
-            NetId = snapshot.NetId,
-            Position = snapshot.Player.Position,
-            Rotation = snapshot.Player.Rotation,
-            Velocity = snapshot.Player.Velocity,
-            AngVel = snapshot.Player.AngVel,
-            IsTruck = false,
-            InSeat = false
-        }, NetClock.Seconds);
-
-        OnTruckLiveryUpdate?.Invoke(new UpdateLiveryDto
-        {
-            NetId = snapshot.NetId,
-            Livery = snapshot.Livery,
-            Appearance = snapshot.Appearance
-        });
-
-        OnTrailerUpdate?.Invoke(new UpdateTrailerDto
-        {
-            NetId = snapshot.NetId,
-            TrailerCount = snapshot.TrailersCount,
-            LiveryId = snapshot.TrailerLivery,
-            CargoTypeId = snapshot.TrailerCargoTypeId
-        });
-
-        OnTruckStateUpdate?.Invoke(new TruckStateDto { NetId = snapshot.NetId, Headlights = snapshot.Headlights });
+        OnPlayerSnapshot?.Invoke(snapshot);
     }
 
     private static void HandleSyncPlayers(SyncPlayersDto syncPlayers)
     {
         foreach (var snapshot in syncPlayers.Players) HandlePlayerConnected(snapshot);
-    }
-
-    private static void HandleSectorUpdate(UpdateSectorDto sector)
-    {
-        OnPlayerSectorUpdate?.Invoke(sector);
-    }
-
-    private static void HandleUpdateLivery(UpdateLiveryDto livery)
-    {
-        OnTruckLiveryUpdate?.Invoke(livery);
-    }
-
-    private static void HandlePositionUpdate(UpdatePositionDto position, double arrivedAt)
-    {
-        OnPlayerPositionUpdate?.Invoke(position, arrivedAt);
     }
 
     private static void HandleMismatch(ProtocolMismatchDto mismatch)
@@ -505,11 +557,6 @@ public class Network
         App.Log.LogInfo("Handshake completed with server. NetId: " + _netId);
     }
 
-    private static void HandleTrailerUpdate(UpdateTrailerDto trailer)
-    {
-        OnTrailerUpdate?.Invoke(trailer);
-    }
-
     private static void ListenerOnNetworkErrorEvent(IPEndPoint endPoint, SocketError socketError)
     {
         App.Log.LogError($"Network error: {socketError}");
@@ -518,6 +565,8 @@ public class Network
     private static void ListenerOnPeerDisconnectedEvent(NetPeer peer, DisconnectInfo disconnectInfo)
     {
         App.Log.LogInfo($"Disconnected from server {peer.Address}:{peer.Port} ({disconnectInfo.Reason})");
+        _lastDisconnect = disconnectInfo.Reason;
+        _disconnectSeen = true;
         _handshakeCompleted = false;
         OnDisconnected?.Invoke();
     }

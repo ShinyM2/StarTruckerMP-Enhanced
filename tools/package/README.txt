@@ -90,8 +90,17 @@ noise suppression, radio volume and the radio sound.
 YOUR OWN SERVER
 -----------------------------------------------------------
 
-Multiplayer -> Host -> start. "Copy details for friends" puts the
-address and port on the clipboard.
+Multiplayer -> Host -> start. "Invite friends via Steam" opens
+Steam's invite dialog: a friend accepts with one click and their
+game starts on your server. While you are on a server, friends
+also see "Join game" beside your name in Steam. "Copy details for
+friends" puts the address and port on the clipboard for everyone
+else.
+
+Multiplayer -> Friends lists friends who are on a server right
+now; press one to join them. The first Multiplayer page shows
+whether the server answers and who is on it, from the main menu
+already.
 
 Friends need your public IP and port 7777. On your router, forward
 port 7777, TCP and UDP, to this computer.
