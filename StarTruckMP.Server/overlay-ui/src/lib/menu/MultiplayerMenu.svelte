@@ -21,6 +21,7 @@
 		muteRadioDuringDialogue: boolean;
 		hearNearbyRadios: boolean;
 		checkForUpdates: boolean;
+		noPauseInMultiplayer: boolean;
 	}
 
 	interface Status {
@@ -240,6 +241,15 @@
 								onchange={(e) => toggle('ignoreSslValidation', e.currentTarget.checked)}
 							/>
 							<span>{tr('overlay.set.ssl')}<small>{tr('overlay.set.ssl.hint')}</small></span>
+						</label>
+
+						<label class="check">
+							<input
+								type="checkbox"
+								checked={settings.noPauseInMultiplayer}
+								onchange={(e) => toggle('noPauseInMultiplayer', e.currentTarget.checked)}
+							/>
+							<span>{tr('overlay.set.nopause')}<small>{tr('overlay.set.nopause.hint')}</small></span>
 						</label>
 
 						<label class="check">

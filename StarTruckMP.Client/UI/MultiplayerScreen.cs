@@ -72,6 +72,7 @@ internal static class MultiplayerScreen
     private static GameObject _muteDialogueRow;
     private static GameObject _nearbyRadiosRow;
     private static GameObject _updatesRow;
+    private static GameObject _noPauseRow;
     private static GameObject _updateRow;
     private static GameObject _copyAddressRow;
     private static float _addressCopiedUntil;
@@ -347,6 +348,12 @@ internal static class MultiplayerScreen
         _chatKeyRow = ActionRow(Page.Display, string.Empty, () =>
         {
             _listening = !_listening;
+            Refresh();
+        });
+
+        _noPauseRow = ActionRow(Page.Display, string.Empty, () =>
+        {
+            App.NoPauseInMultiplayer.Value = !App.NoPauseInMultiplayer.Value;
             Refresh();
         });
 
@@ -934,6 +941,9 @@ internal static class MultiplayerScreen
 
         if (_updatesRow != null)
             SetRowValue(_updatesRow, Strings.Get("display.updates"), OnOff(App.CheckForUpdates.Value));
+
+        if (_noPauseRow != null)
+            SetRowValue(_noPauseRow, Strings.Get("display.nopause"), OnOff(App.NoPauseInMultiplayer.Value));
 
         if (_hostToggleRow != null)
         {

@@ -62,6 +62,7 @@ public class MultiplayerUiComponent : MonoBehaviour
         }
 
         MonitorPanel.Tick();
+        KeepRunning();
 
         // The native page shows live state, and Esc backs out of it like the game's own screens.
         if (MultiplayerScreen.IsOpen)
@@ -79,6 +80,19 @@ public class MultiplayerUiComponent : MonoBehaviour
             _lastConnected = connected;
             PushStatus();
         }
+    }
+
+    /// <summary>
+    /// The safety net under <see cref="Patches.PauseController_Patch"/>: whatever path froze time
+    /// or stopped the window updating in the background is undone every frame while on a server.
+    /// </summary>
+    private static void KeepRunning()
+    {
+        if (!Patches.PauseController_Patch.Suppressing) return;
+
+        if (!Application.runInBackground) Application.runInBackground = true;
+        if (Time.timeScale == 0f) Time.timeScale = 1f;
+        if (AudioListener.pause) AudioListener.pause = false;
     }
 
     /// <summary>
@@ -243,6 +257,9 @@ public class MultiplayerUiComponent : MonoBehaviour
         if (settings.CheckForUpdates.HasValue)
             App.CheckForUpdates.Value = settings.CheckForUpdates.Value;
 
+        if (settings.NoPauseInMultiplayer.HasValue)
+            App.NoPauseInMultiplayer.Value = settings.NoPauseInMultiplayer.Value;
+
         App.Log.LogInfo($"[MP UI] Settings saved (address changed: {addressChanged})");
         PushSettings();
 
@@ -276,7 +293,8 @@ public class MultiplayerUiComponent : MonoBehaviour
         RadioEffect = App.RadioEffectStrength.Value,
         MuteRadioDuringDialogue = App.MuteRadioDuringDialogue.Value,
         HearNearbyRadios = App.HearNearbyRadios.Value,
-        CheckForUpdates = App.CheckForUpdates.Value
+        CheckForUpdates = App.CheckForUpdates.Value,
+        NoPauseInMultiplayer = App.NoPauseInMultiplayer.Value
     });
 
     private void PushStatus() => OverlayManager.PostMessage("status", new StatusState
@@ -336,6 +354,7 @@ public class MultiplayerUiComponent : MonoBehaviour
         public bool? MuteRadioDuringDialogue { get; set; }
         public bool? HearNearbyRadios { get; set; }
         public bool? CheckForUpdates { get; set; }
+        public bool? NoPauseInMultiplayer { get; set; }
     }
 
     private class SettingsState
@@ -354,6 +373,7 @@ public class MultiplayerUiComponent : MonoBehaviour
         public bool MuteRadioDuringDialogue { get; set; }
         public bool HearNearbyRadios { get; set; }
         public bool CheckForUpdates { get; set; }
+        public bool NoPauseInMultiplayer { get; set; }
     }
 
     private class StatusState

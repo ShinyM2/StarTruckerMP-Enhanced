@@ -14,7 +14,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$GameDir,
     [string]$BepInExZip = "",
-    [string]$Version = "1.3.0",
+    [string]$Version = "1.3.1",
     [string]$NodeDir = "",
     [switch]$SkipPackage
 )

@@ -88,7 +88,7 @@ The mod only connects once the user loads a save. Sitting in the main menu is no
 Read `$GameDir\BepInEx\LogOutput.log`. A good install shows, in order:
 
 ```
-Loading [StarTruckMP 1.3.0]
+Loading [StarTruckMP 1.3.1]
 [Auth] Steam persona name: <nickname>
 [Auth] Steam token: <32 hex chars>
 Connected to server <address>:7777, waiting for handshake...

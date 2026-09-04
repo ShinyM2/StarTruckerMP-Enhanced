@@ -273,7 +273,7 @@ public class GameEventsComponent : MonoBehaviour
             IsTruck = true,
             InSeat = false,
             Seq = ++_truckSeq,
-            SentAt = Environment.TickCount64
+            SentAt = NetClock.Milliseconds
         }, PacketType.UpdatePosition);
 
         _lastTruckSent = position;
@@ -311,7 +311,7 @@ public class GameEventsComponent : MonoBehaviour
             Kind = 2,
             Index = 0,
             Seq = ++_trailerSeq,
-            SentAt = Environment.TickCount64
+            SentAt = NetClock.Milliseconds
         }, PacketType.UpdatePosition);
 
         _lastTrailerSent = position;
@@ -337,7 +337,7 @@ public class GameEventsComponent : MonoBehaviour
             IsTruck = false,
             InSeat = false,
             Seq = ++_playerSeq,
-            SentAt = Environment.TickCount64
+            SentAt = NetClock.Milliseconds
         }, PacketType.UpdatePosition);
 
         _lastPlayerSent = position;

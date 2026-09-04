@@ -20,6 +20,7 @@ public static class App
     public static ConfigEntry<int> RadioEffectStrength;
     public static ConfigEntry<bool> HearNearbyRadios;
     public static ConfigEntry<bool> CheckForUpdates;
+    public static ConfigEntry<bool> NoPauseInMultiplayer;
     public static ConfigEntry<bool> IgnoreSslValidation;
     public static ConfigEntry<bool> ShowNameplates;
     public static ConfigEntry<bool> RemoteCollisions;
@@ -41,6 +42,7 @@ public static class App
         IgnoreSslValidation = config.Bind("Connection", "IgnoreSslValidation", true, "Accept the server's self-signed certificate. Every StarTruckMP server generates one on first start, so this stays on unless the host installed a real certificate.");
         HearNearbyRadios = config.Bind("Audio", "HearNearbyRadios", true, "Also play another player's radio voice from their truck when it is close by, so a transmission from the truck beside you sounds like it comes from there too.");
         CheckForUpdates = config.Bind("Multiplayer", "CheckForUpdates", true, "Ask GitHub once at startup whether a newer release exists and say so in the menu.");
+        NoPauseInMultiplayer = config.Bind("Multiplayer", "NoPauseInMultiplayer", true, "Keep the world running while a menu, the map or a popup is open and when the window loses focus, for as long as you are on a server. A paused player stands still for everyone else and then leaps.");
         ShowNameplates = config.Bind("Multiplayer", "ShowNameplates", true, "Show other players' names above their trucks.");
         RemoteCollisions = config.Bind("Multiplayer", "RemoteCollisions", false, "Let other players' trucks collide with you. Off by default: with any latency the collision happens where the truck is not.");
         GhostMode = config.Bind("Multiplayer", "GhostMode", true, "Fade other players' trucks out when they are in the way at a warp gate or a docking bay. Your own truck is never touched.");

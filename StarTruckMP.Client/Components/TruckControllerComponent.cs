@@ -76,14 +76,25 @@ public class TruckControllerComponent : MonoBehaviour
         _rb = GetComponent<Rigidbody>();
         if (_rb != null)
         {
+            // Kinematic and not interpolated: the transform is placed directly every rendered
+            // frame below, and physics interpolation would only fight that.
             _rb.isKinematic = true;
-            _rb.interpolation = RigidbodyInterpolation.Interpolate;
+            _rb.interpolation = RigidbodyInterpolation.None;
         }
 
         _npcTruckVisual = transform.Find("NPCTruck")?.gameObject;
     }
 
-    void FixedUpdate()
+    /// <summary>
+    /// Placed once per rendered frame, after the game's own Update.
+    ///
+    /// This used to run in FixedUpdate through the rigidbody. Two things were wrong with that at
+    /// speed: the physics step and the rendered frame do not line up, so a 50 Hz placement
+    /// showed through as a stutter at higher frame rates; and the game recentres its scene in
+    /// its Update, so for the rest of that frame a truck placed under the old origin sat a whole
+    /// shift away from where it belonged. LateUpdate follows the recentre and the frame alike.
+    /// </summary>
+    void LateUpdate()
     {
         if (!_hasFirstUpdate) return;
 
@@ -108,7 +119,7 @@ public class TruckControllerComponent : MonoBehaviour
             }
             else if (_delay > MinDelay)
             {
-                _delay = Math.Max(MinDelay, _delay - DelayRecoveryPerSecond * Time.fixedDeltaTime);
+                _delay = Math.Max(MinDelay, _delay - DelayRecoveryPerSecond * Time.unscaledDeltaTime);
             }
 
             // Forget what is well behind the playback point, keeping one state before it.
@@ -122,17 +133,7 @@ public class TruckControllerComponent : MonoBehaviour
         // Converted every step rather than once on arrival: the scene can be recentred between
         // two packets, and a target left in stale scene coordinates would drag the truck across
         // the sector until the next update landed.
-        var scenePosition = FloatingOrigin.ToScene(worldPosition);
-        if (_rb != null)
-        {
-            _rb.MovePosition(scenePosition);
-            _rb.MoveRotation(rotation);
-        }
-        else
-        {
-            // A trailer detached from its NPC cab has no body of its own to move; the transform will do.
-            transform.SetPositionAndRotation(scenePosition, rotation);
-        }
+        transform.SetPositionAndRotation(FloatingOrigin.ToScene(worldPosition), rotation);
     }
 
     /// <summary>The state at a moment of the owner's time, between two known states or coasting past the last.</summary>
@@ -174,7 +175,7 @@ public class TruckControllerComponent : MonoBehaviour
         rotation = newest.Rotation;
     }
 
-    private static double Now() => Environment.TickCount64 / 1000.0;
+    private static double Now() => NetClock.Seconds;
 
     /// <summary>
     /// Takes a state off the wire. <paramref name="sentAtMs"/> is the sender's clock; a zero (an

@@ -58,6 +58,7 @@ public class Plugin : BasePlugin
         Harmony.CreateAndPatchAll(typeof(MonitorChannelSwitcher_Patch));
         Harmony.CreateAndPatchAll(typeof(MonitorOverlaySwitcher_Patch));
         Harmony.CreateAndPatchAll(typeof(MapPlayers_Patch));
+        Harmony.CreateAndPatchAll(typeof(PauseController_Patch));
         Harmony.CreateAndPatchAll(typeof(PauseScreen_Patch));
         
         Log.LogInfo($"Plugin {PluginInfo.PLUGIN_GUID} loaded.");
