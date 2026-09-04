@@ -1,4 +1,4 @@
-# How it works
+﻿# How it works
 
 A short explanation for the player: what the mod does, what it does not, and why. [Русская версия](HOW-IT-WORKS.ru.md).
 
@@ -12,12 +12,12 @@ A short explanation for the player: what the mod does, what it does not, and why
 
 Everyone plays **their own save**: their own money, jobs, progress, truck. The mod does not merge worlds; it shows players each other's trucks.
 
-Every 33 ms your truck sends its position, rotation and velocity to the server. The server passes that to whoever is in the same sector, and a copy of your truck appears for them, with your paint, your trailer and your name above the cab. Between packets the copy carries its motion forward by the last velocity, so at cruising speed it does not trail.
+25 times a second your truck sends its position, rotation and velocity to the server, and each packet repeats the couple of states before it, so a packet the network loses costs nothing. The server passes that on to whoever is in the same sector the moment it arrives, and a copy of your truck appears for them, with your paint, your trailer and your name above the cab.
 
 Synchronised: truck position, the truck's whole look (livery, base material, colours, bolt-on parts, wear and dirt), headlights, trailer (count, cargo and where it swings), name, chat, radio.
 Not synchronised: cargo in the bed, money, jobs, purchases, station state, the spacesuited player outside the truck (partly).
 
-Positions travel with the sender's own clock. The copy is drawn where the owner was about 120 ms ago, interpolated between the two real positions around that moment, so it moves as smoothly as the owner's truck whatever the network did to the packets. The header of the cab monitor's multiplayer page shows the ping, the share of movement packets lost and that delay.
+Positions travel with the sender's own clock. The copy is drawn a little in the past — 80 ms on a clean link, more on one that jitters or drops packets, measured from what the link has actually been doing over the last few seconds — along the curve between the two real states around that moment, so it moves as smoothly as the owner's truck whatever the network did to the packets. The cab and the trailer share one clock, so the train stays coupled. When the delay has to change, the copy plays a few percent slower or faster for a moment rather than jumping, and when packets stop altogether it coasts and then glides back to the truth when they return. The header of the cab monitor's multiplayer page shows the ping, the share of movement packets lost and the current delay.
 
 ## Sectors
 

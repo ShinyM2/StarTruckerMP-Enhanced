@@ -58,6 +58,9 @@ internal static class MultiplayerState
     /// <summary>Movement packets missing over the last window, as a percentage of those expected.</summary>
     public static int PacketLossPercent;
 
+    /// <summary>Of the lost movement packets, the share whose states a later packet carried in anyway.</summary>
+    public static int RecoveredPercent;
+
     /// <summary>How far behind live the remote trucks are being drawn right now, in milliseconds.</summary>
     public static int InterpolationMs;
 

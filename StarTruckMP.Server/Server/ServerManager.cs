@@ -39,8 +39,12 @@ public class ServerManager
     private readonly ConcurrentQueue<IncomingPacketWorkItem> _incomingPackets = new();
     private readonly ConcurrentQueue<OutgoingSendWorkItem> _outgoingPackets = new();
 
+    /// <summary>Set by the socket thread whenever a packet is queued, so the relay loop wakes at once instead of on its next tick.</summary>
+    private readonly AutoResetEvent _work = new(false);
+
     private long _nextPingBroadcast;
 
+    /// <param name="PacketType">The type byte as it came off the wire: <see cref="PacketType.EncryptedPayload"/> until the frame is opened.</param>
     /// <param name="Encrypted">True when the packet arrived inside an EncryptedPayload frame.</param>
     private readonly record struct IncomingPacketWorkItem(int PeerId, PacketType PacketType, byte[] Raw, byte Channel, DeliveryMethod DeliveryMethod, bool Encrypted);
 
@@ -51,6 +55,11 @@ public class ServerManager
     {
         _listener = new EventBasedNetListener();
         _server = new NetManager(_listener);
+
+        // Packets are queued on the socket thread the instant they land and the relay loop is
+        // woken for them, rather than both waiting for the next 15 ms tick. Everything else the
+        // library reports still comes through PollEvents on the relay loop.
+        _server.UnsyncedReceiveEvent = true;
         _logger = logger;
         _settings = settings;
         _playerContainer = playerContainer;
@@ -94,47 +103,19 @@ public class ServerManager
             _logger.LogError("Network error from {EndPoint}, socket error: {SocketError}", endPoint, socketError);
     }
 
+    /// <summary>
+    /// On the socket thread. Nothing is opened here: the peer's cipher is used by the relay loop
+    /// to encrypt what goes out, and one thread per cipher keeps that simple. The frame is queued
+    /// as it came and the loop is woken to deal with it.
+    /// </summary>
     private void ListenerOnNetworkReceiveEvent(NetPeer peer, NetPacketReader reader, byte channel, DeliveryMethod deliveryMethod)
     {
         try
         {
-            var firstByte = reader.GetByte();
-            var packetType = (PacketType)firstByte;
-
-            // Encrypted payload: decrypt before enqueuing
-            if (packetType == PacketType.EncryptedPayload)
-            {
-                if (!_playerContainer.TryGetPlayer(peer.Id, out var player) || player?.Cipher is null)
-                {
-                    if (_logger.IsEnabled(LogLevel.Warning))
-                        _logger.LogWarning("Received EncryptedPayload from peer {PeerId} before cipher is ready — dropping.", peer.Id);
-                    return;
-                }
-
-                var encryptedFrame = reader.GetRemainingBytes();
-                byte[] plaintext;
-                try
-                {
-                    plaintext = player.Cipher.Decrypt(encryptedFrame);
-                }
-                catch (CryptographicException ex)
-                {
-                    if (_logger.IsEnabled(LogLevel.Warning))
-                        _logger.LogWarning("Decryption failed for peer {PeerId}: {Message}", peer.Id, ex.Message);
-                    return;
-                }
-
-                // plaintext = [1-byte real PacketType][body...]
-                if (plaintext.Length < 1) return;
-                var realPacketType = (PacketType)plaintext[0];
-                var body = plaintext[1..];
-                _incomingPackets.Enqueue(new IncomingPacketWorkItem(peer.Id, realPacketType, body, channel, deliveryMethod, Encrypted: true));
-                return;
-            }
-
-            // Plaintext path (only ProtocolHello and connection-level packets before cipher is ready)
+            var packetType = (PacketType)reader.GetByte();
             var raw = reader.GetRemainingBytes();
-            _incomingPackets.Enqueue(new IncomingPacketWorkItem(peer.Id, packetType, raw, channel, deliveryMethod, Encrypted: false));
+            _incomingPackets.Enqueue(new IncomingPacketWorkItem(peer.Id, packetType, raw, channel, deliveryMethod, Encrypted: packetType == PacketType.EncryptedPayload));
+            _work.Set();
         }
         finally
         {
@@ -232,6 +213,9 @@ public class ServerManager
         ProcessKicks();
     }
 
+    /// <summary>Blocks until a packet is queued or <paramref name="milliseconds"/> pass, whichever is first.</summary>
+    public void WaitForWork(int milliseconds) => _work.WaitOne(milliseconds);
+
     /// <summary>
     /// Sends everyone the whole latency table, including their own entry.
     ///
@@ -278,6 +262,9 @@ public class ServerManager
 
     private void ProcessIncomingPacket(IncomingPacketWorkItem packet)
     {
+        if (packet.Encrypted && !TryOpen(ref packet))
+            return;
+
         var player = GetKnownPlayerOrNull(packet.PeerId, packet.PacketType);
         if (player is null)
             return;
@@ -329,6 +316,34 @@ public class ServerManager
                 _logger.LogWarning("Unhandled packet type {PacketType} from peer {PeerId}", packet.PacketType, packet.PeerId);
                 break;
         }
+    }
+
+    /// <summary>Opens an EncryptedPayload frame in place: the real type and body replace the frame.</summary>
+    private bool TryOpen(ref IncomingPacketWorkItem packet)
+    {
+        if (!_playerContainer.TryGetPlayer(packet.PeerId, out var player) || player?.Cipher is null)
+        {
+            if (_logger.IsEnabled(LogLevel.Warning))
+                _logger.LogWarning("Received EncryptedPayload from peer {PeerId} before cipher is ready — dropping.", packet.PeerId);
+            return false;
+        }
+
+        byte[] plaintext;
+        try
+        {
+            plaintext = player.Cipher.Decrypt(packet.Raw);
+        }
+        catch (CryptographicException ex)
+        {
+            if (_logger.IsEnabled(LogLevel.Warning))
+                _logger.LogWarning("Decryption failed for peer {PeerId}: {Message}", packet.PeerId, ex.Message);
+            return false;
+        }
+
+        // plaintext = [1-byte real PacketType][body...]
+        if (plaintext.Length < 1) return false;
+        packet = packet with { PacketType = (PacketType)plaintext[0], Raw = plaintext[1..] };
+        return true;
     }
 
     private void HandleVoice(int packetPeerId, Player player, byte[] packetRaw)
@@ -385,6 +400,10 @@ public class ServerManager
 
             processed++;
         }
+
+        // Send() only queues on the peer; the library's thread flushes on its own tick, up to
+        // 15 ms later. Wake it so a relayed position leaves the moment it was relayed.
+        if (processed > 0) _server.TriggerUpdate();
     }
 
     /// <summary>
@@ -631,7 +650,8 @@ public class ServerManager
             Seq = positionData.Seq,
             SentAt = positionData.SentAt,
             Kind = positionData.Kind,
-            Index = positionData.Index
+            Index = positionData.Index,
+            History = positionData.History
         };
 
         // Only players sharing this sector can see the sender, so there is no point paying for

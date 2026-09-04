@@ -42,5 +42,12 @@ namespace StarTruckMP.Shared.Cmd
         /// <summary>For a trailer, its place in the train: 0 is hitched to the truck, 1 behind that, and so on.</summary>
         [Key(9)]
         public byte Index { get; set; }
+
+        /// <summary>
+        /// The states this stream sent just before this one, newest first, so a receiver that
+        /// lost the packets they came in still gets them. Empty or null from an older client.
+        /// </summary>
+        [Key(10)]
+        public MotionSample[]? History { get; set; }
     }
 }

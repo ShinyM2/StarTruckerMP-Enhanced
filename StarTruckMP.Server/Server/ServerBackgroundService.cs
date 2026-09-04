@@ -6,36 +6,43 @@ namespace StarTruckMP.Server.Server;
 
 public class ServerBackgroundService(ServerManager serverManager) : IHostedService
 {
-    private Task? _pollingTask;
+    /// <summary>
+    /// The longest the relay loop sleeps when nothing arrives: the pace of the ping table, the
+    /// kick list and the library's own housekeeping. A packet wakes it at once.
+    /// </summary>
+    private const int IdleTickMs = 15;
+
+    private Thread? _relayThread;
+    private readonly CancellationTokenSource _stopping = new();
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
         serverManager.Start();
 
-        // Run the polling loop in a separate Task so StartAsync returns immediately,
-        // allowing Kestrel and the rest of the host to finish starting up.
-        _pollingTask = Task.Run(async () =>
+        // Its own thread rather than a Task: the loop blocks on a wait handle, and a thread-pool
+        // thread held for the life of the process is a thread the pool is missing.
+        _relayThread = new Thread(() =>
         {
-            try
+            while (!_stopping.IsCancellationRequested)
             {
-                while (!cancellationToken.IsCancellationRequested)
-                {
-                    serverManager.Polling();
-                    await Task.Delay(15, cancellationToken);
-                }
+                serverManager.Polling();
+                serverManager.WaitForWork(IdleTickMs);
             }
-            catch (TaskCanceledException)
-            {
-            }
-        }, cancellationToken);
+        })
+        {
+            Name = "StarTruckMP relay",
+            IsBackground = true
+        };
+        _relayThread.Start();
 
         return Task.CompletedTask;
     }
 
-    public async Task StopAsync(CancellationToken cancellationToken)
+    public Task StopAsync(CancellationToken cancellationToken)
     {
+        _stopping.Cancel();
+        _relayThread?.Join(TimeSpan.FromSeconds(2));
         serverManager.Stop();
-        if (_pollingTask is not null)
-            await _pollingTask.ConfigureAwait(false);
+        return Task.CompletedTask;
     }
 }

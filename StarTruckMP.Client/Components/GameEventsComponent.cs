@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using StarTruckMP.Client.Synchronization;
@@ -203,25 +204,72 @@ public class GameEventsComponent : MonoBehaviour
     }
 
     private CancellationTokenSource _cts = new();
-    private const float ThresholdChange = 0.1f;
+    /// <summary>A stream is sent when it moved this far or turned this much; a resting one only by the heartbeat.</summary>
+    private const float ThresholdMetres = 0.02f;
+    private const float ThresholdDegrees = 0.25f;
 
     /// <summary>
-    /// Gap between position sends. Receivers interpolate between packets, so 30/s is plenty.
+    /// Gap between position sends. Receivers interpolate between states along the reported
+    /// velocities, and every packet repeats the states before it, so 25 a second is plenty.
+    /// Rounded to whole physics steps so the spacing is exactly even.
     /// </summary>
-    private const float SendInterval = 0.033f;
+    private const float SendInterval = 0.04f;
 
     /// <summary>A standing truck is still reported now and then, so a late joiner is not left guessing.</summary>
     private const float HeartbeatInterval = 1f;
 
-    /// <summary>Per-stream packet counters, so receivers can discard out-of-order updates.</summary>
-    private uint _playerSeq;
-    private uint _truckSeq;
+    private int _stepsUntilSend;
 
-    private float _nextSend;
-    private Vector3 _lastTruckSent;
-    private Vector3 _lastPlayerSent;
-    private float _lastTruckSendTime;
-    private float _lastPlayerSendTime;
+    private readonly MotionStream _truckStream = new();
+    private readonly MotionStream _trailerStream = new();
+    private readonly MotionStream _playerStream = new();
+
+    /// <summary>
+    /// What one moving thing last sent: its counter, where it was, and the last few states for
+    /// the next packet to repeat (see <see cref="MotionSample"/>).
+    /// </summary>
+    private sealed class MotionStream
+    {
+        public uint Seq;
+        public Vector3 LastPosition;
+        public Quaternion LastRotation = Quaternion.identity;
+        public float LastSendTime;
+        private readonly List<MotionSample> _recent = new();
+
+        public bool Due(Vector3 position, Quaternion rotation) =>
+            Vector3.Distance(LastPosition, position) > ThresholdMetres ||
+            Quaternion.Angle(LastRotation, rotation) > ThresholdDegrees ||
+            Time.unscaledTime - LastSendTime >= HeartbeatInterval;
+
+        /// <summary>The states sent before this one, newest first, as many as the setting asks for.</summary>
+        public MotionSample[] History()
+        {
+            var depth = Mathf.Clamp(App.MovementRedundancy.Value, 0, 3);
+            if (depth == 0 || _recent.Count == 0) return null;
+            var count = Mathf.Min(depth, _recent.Count);
+            var history = new MotionSample[count];
+            for (var i = 0; i < count; i++) history[i] = _recent[i];
+            return history;
+        }
+
+        public void Sent(UpdatePositionCmd cmd, Vector3 position, Quaternion rotation)
+        {
+            LastPosition = position;
+            LastRotation = rotation;
+            LastSendTime = Time.unscaledTime;
+
+            _recent.Insert(0, new MotionSample
+            {
+                Position = cmd.Position,
+                Rotation = cmd.Rotation,
+                Velocity = cmd.Velocity,
+                AngVel = cmd.AngVel,
+                Seq = cmd.Seq,
+                SentAt = cmd.SentAt
+            });
+            while (_recent.Count > 3) _recent.RemoveAt(_recent.Count - 1);
+        }
+    }
 
     /// <summary>
     /// Positions go out from the physics step, on the game thread.
@@ -230,19 +278,26 @@ public class GameEventsComponent : MonoBehaviour
     /// about: a position and the scene origin it had to be converted with could be read on either
     /// side of the game recentring the world, and the result was a packet a few kilometres off —
     /// the "teleport" other players saw. Here the position, the velocity and the origin are all
-    /// read within one physics step, and the timestamp is taken at the same instant.
+    /// read within one physics step.
+    ///
+    /// The timestamp is the physics clock, not the wall clock: when the game hitches and then
+    /// runs several physics steps in one frame to catch up, the wall clock would stamp all of
+    /// those states with the same instant and receivers would see the truck leap through them,
+    /// whereas the physics clock spaces them exactly as the motion happened.
     /// </summary>
     private void FixedUpdate()
     {
         if (Network.NetId == -1) return;
-        if (Time.unscaledTime < _nextSend) return;
-        _nextSend = Time.unscaledTime + SendInterval;
+        if (--_stepsUntilSend > 0) return;
+        _stepsUntilSend = Mathf.Max(1, Mathf.RoundToInt(SendInterval / Time.fixedDeltaTime));
+
+        var stamp = (long)(Time.fixedUnscaledTimeAsDouble * 1000.0);
 
         try
         {
-            SendTruck();
-            SendTrailer();
-            SendPlayer();
+            SendTruck(stamp);
+            SendTrailer(stamp);
+            SendPlayer(stamp);
         }
         catch (Exception ex)
         {
@@ -252,17 +307,16 @@ public class GameEventsComponent : MonoBehaviour
         }
     }
 
-    private void SendTruck()
+    private void SendTruck(long stamp)
     {
         var truck = _truck;
         var rigid = _truckRigid;
         if (truck == null || rigid == null) return;
 
         truck.transform.GetPositionAndRotation(out var position, out var rotation);
-        var moved = Vector3.Distance(_lastTruckSent, position) > ThresholdChange;
-        if (!moved && Time.unscaledTime - _lastTruckSendTime < HeartbeatInterval) return;
+        if (!_truckStream.Due(position, rotation)) return;
 
-        Network.SendServerMessage(new UpdatePositionCmd
+        var cmd = new UpdatePositionCmd
         {
             // Sent in absolute world space: every client recentres its scene differently, so raw
             // local coordinates mean nothing to the receiver.
@@ -272,35 +326,31 @@ public class GameEventsComponent : MonoBehaviour
             AngVel = ConvertToSharedVector3(rigid.angularVelocity),
             IsTruck = true,
             InSeat = false,
-            Seq = ++_truckSeq,
-            SentAt = NetClock.Milliseconds
-        }, PacketType.UpdatePosition);
-
-        _lastTruckSent = position;
-        _lastTruckSendTime = Time.unscaledTime;
+            Kind = 1,
+            Seq = ++_truckStream.Seq,
+            SentAt = stamp,
+            History = _truckStream.History()
+        };
+        Network.SendServerMessage(cmd, PacketType.UpdatePosition);
+        _truckStream.Sent(cmd, position, rotation);
     }
-
-    private uint _trailerSeq;
-    private Vector3 _lastTrailerSent;
-    private float _lastTrailerSendTime;
 
     /// <summary>
     /// The hitched trailer, as its own stream: it swings on a joint behind the truck, and the copy
     /// other players see should swing the same way rather than sit bolted to the cab.
     /// </summary>
-    private void SendTrailer()
+    private void SendTrailer(long stamp)
     {
         var truck = _starTruck;
         var trailer = truck != null ? truck.hitchedTrailer : null;
         if (trailer == null) return;
 
         trailer.transform.GetPositionAndRotation(out var position, out var rotation);
-        var moved = Vector3.Distance(_lastTrailerSent, position) > ThresholdChange;
-        if (!moved && Time.unscaledTime - _lastTrailerSendTime < HeartbeatInterval) return;
+        if (!_trailerStream.Due(position, rotation)) return;
 
         var body = trailer.rb;
 
-        Network.SendServerMessage(new UpdatePositionCmd
+        var cmd = new UpdatePositionCmd
         {
             Position = ConvertToSharedVector3(FloatingOrigin.ToWorld(position)),
             Rotation = ConvertToSharedQuaternion(rotation),
@@ -310,25 +360,26 @@ public class GameEventsComponent : MonoBehaviour
             InSeat = false,
             Kind = 2,
             Index = 0,
-            Seq = ++_trailerSeq,
-            SentAt = NetClock.Milliseconds
-        }, PacketType.UpdatePosition);
-
-        _lastTrailerSent = position;
-        _lastTrailerSendTime = Time.unscaledTime;
+            Seq = ++_trailerStream.Seq,
+            SentAt = stamp,
+            History = _trailerStream.History()
+        };
+        Network.SendServerMessage(cmd, PacketType.UpdatePosition);
+        _trailerStream.Sent(cmd, position, rotation);
     }
 
-    private void SendPlayer()
+    private void SendPlayer(long stamp)
     {
         var player = _player;
         var rigid = _playerRigid;
         if (player == null || rigid == null) return;
 
         player.transform.GetPositionAndRotation(out var position, out var rotation);
-        var moved = Vector3.Distance(_lastPlayerSent, position) > ThresholdChange;
-        if (!moved && Time.unscaledTime - _lastPlayerSendTime < HeartbeatInterval) return;
+        if (!_playerStream.Due(position, rotation)) return;
 
-        Network.SendServerMessage(new UpdatePositionCmd
+        // The player on foot is placed directly on arrival, so there is nothing to interpolate
+        // a repeated state into; the packet stays small.
+        var cmd = new UpdatePositionCmd
         {
             Position = ConvertToSharedVector3(FloatingOrigin.ToWorld(position)),
             Rotation = ConvertToSharedQuaternion(rotation),
@@ -336,12 +387,11 @@ public class GameEventsComponent : MonoBehaviour
             AngVel = ConvertToSharedVector3(rigid.angularVelocity),
             IsTruck = false,
             InSeat = false,
-            Seq = ++_playerSeq,
-            SentAt = NetClock.Milliseconds
-        }, PacketType.UpdatePosition);
-
-        _lastPlayerSent = position;
-        _lastPlayerSendTime = Time.unscaledTime;
+            Seq = ++_playerStream.Seq,
+            SentAt = stamp
+        };
+        Network.SendServerMessage(cmd, PacketType.UpdatePosition);
+        _playerStream.Sent(cmd, position, rotation);
     }
 
     private StarTruckMP.Shared.Vector3 ConvertToSharedVector3(Vector3 unityVector)

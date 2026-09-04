@@ -17,7 +17,8 @@ public class Network
 {
     public static event Action<int> OnConnected;
     public static event Action OnDisconnected;
-    public static event Action<UpdatePositionDto> OnPlayerPositionUpdate;
+    /// <summary>A movement packet and our clock, in seconds, at the instant it landed.</summary>
+    public static event Action<UpdatePositionDto, double> OnPlayerPositionUpdate;
     public static event Action<UpdateLiveryDto> OnTruckLiveryUpdate;
     public static event Action<UpdateSectorDto> OnPlayerSectorUpdate;
     public static event Action<int> OnPlayerDisconnected;
@@ -100,6 +101,10 @@ public class Network
                 server.Send(BuildEncryptedPacket(serialized), deliveryMethod);
             }
 
+            // Send() only queues; the library's own thread would flush the queue on its next
+            // tick, up to 15 ms later. Wake it now so a position leaves the moment it is read.
+            _client?.TriggerUpdate();
+
             if (packetType != PacketType.UpdatePosition)
                 App.Log.LogInfo($"Packet:{packetType} out {serialized.Length} bytes");
         }
@@ -126,6 +131,7 @@ public class Network
         opusFrame.CopyTo(plain, 1);
 
         server.Send(BuildEncryptedPacket(plain), DeliveryMethod.Unreliable);
+        _client?.TriggerUpdate();
     }
 
     /// <summary>
@@ -183,6 +189,13 @@ public class Network
             {
                 var listener = new EventBasedNetListener();
                 _client = new NetManager(listener);
+
+                // Packets are handed over on the socket thread the instant they land, rather
+                // than waiting for the 50 ms poll below. That poll added up to 50 ms of jitter
+                // of our own making to every position — as much as the network itself on a good
+                // day. Connection events still come through PollEvents.
+                _client.UnsyncedReceiveEvent = true;
+                _client.AutoRecycle = true;
 
                 listener.PeerConnectedEvent += ListenerOnPeerConnectedEvent;
                 listener.PeerDisconnectedEvent += ListenerOnPeerDisconnectedEvent;
@@ -270,6 +283,9 @@ public class Network
 
     private static void ListenerOnNetworkReceiveEvent(NetPeer peer, NetPacketReader reader, byte channel, DeliveryMethod deliveryMethod)
     {
+        // Stamped before anything else: the playback delay is measured from this.
+        var arrivedAt = NetClock.Seconds;
+
         try
         {
             var firstByte = reader.GetByte();
@@ -315,7 +331,7 @@ public class Network
             {
                 // ordered by most common to less common
                 case PacketType.UpdatePosition:
-                    HandlePositionUpdate(raw.Deserialize<UpdatePositionDto>());
+                    HandlePositionUpdate(raw.Deserialize<UpdatePositionDto>(), arrivedAt);
                     break;
                 case PacketType.Voice:
                     HandleVoice(raw);
@@ -405,7 +421,7 @@ public class Network
             AngVel = snapshot.Player.AngVel,
             IsTruck = false,
             InSeat = false
-        });
+        }, NetClock.Seconds);
 
         OnTruckLiveryUpdate?.Invoke(new UpdateLiveryDto
         {
@@ -440,9 +456,9 @@ public class Network
         OnTruckLiveryUpdate?.Invoke(livery);
     }
 
-    private static void HandlePositionUpdate(UpdatePositionDto position)
+    private static void HandlePositionUpdate(UpdatePositionDto position, double arrivedAt)
     {
-        OnPlayerPositionUpdate?.Invoke(position);
+        OnPlayerPositionUpdate?.Invoke(position, arrivedAt);
     }
 
     private static void HandleMismatch(ProtocolMismatchDto mismatch)

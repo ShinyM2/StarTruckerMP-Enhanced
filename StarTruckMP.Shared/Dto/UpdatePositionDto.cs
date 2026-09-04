@@ -34,5 +34,9 @@ namespace StarTruckMP.Shared.Dto
 
         [Key(10)]
         public byte Index { get; set; }
+
+        /// <summary>The sender's preceding states, relayed untouched; see the command.</summary>
+        [Key(11)]
+        public MotionSample[]? History { get; set; }
     }
 }
